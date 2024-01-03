@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2017.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2017. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 #include <ucm/api/ucm.h>
@@ -83,7 +83,8 @@ protected:
                                 int expect_mem_type = UCS_MEMORY_TYPE_CUDA)  {
         ASSERT_EQ(ptr, alloc_event.mem_type.address);
         ASSERT_EQ(size, alloc_event.mem_type.size);
-        ASSERT_EQ(expect_mem_type, alloc_event.mem_type.mem_type);
+        EXPECT_TRUE((alloc_event.mem_type.mem_type == expect_mem_type) ||
+                    (alloc_event.mem_type.mem_type == UCS_MEMORY_TYPE_UNKNOWN));
     }
 
     void check_mem_free_events(void *ptr, size_t size,
@@ -142,11 +143,11 @@ UCS_TEST_F(cuda_hooks, test_cuMemAllocManaged) {
 
     ret = cuMemAllocManaged(&dptr, 64, CU_MEM_ATTACH_GLOBAL);
     ASSERT_EQ(ret, CUDA_SUCCESS);
-    check_mem_alloc_events((void *)dptr, 64, UCS_MEMORY_TYPE_CUDA_MANAGED);
+    check_mem_alloc_events((void*)dptr, 64, UCS_MEMORY_TYPE_CUDA_MANAGED);
 
     ret = cuMemFree(dptr);
     ASSERT_EQ(ret, CUDA_SUCCESS);
-    check_mem_free_events((void *)dptr, 0);
+    check_mem_free_events((void*)dptr, 0);
 }
 
 UCS_TEST_F(cuda_hooks, test_cuMemAllocPitch) {
@@ -162,6 +163,31 @@ UCS_TEST_F(cuda_hooks, test_cuMemAllocPitch) {
     ASSERT_EQ(ret, CUDA_SUCCESS);
     check_mem_free_events((void *)dptr, 0);
 }
+
+#if CUDA_VERSION >= 11020
+UCS_TEST_F(cuda_hooks, test_cuMemAllocAsync) {
+    CUresult ret;
+    CUdeviceptr dptr;
+
+    /* release with cuMemFree */
+    ret = cuMemAllocAsync(&dptr, 64, 0);
+    ASSERT_EQ(ret, CUDA_SUCCESS);
+    check_mem_alloc_events((void*)dptr, 64, UCS_MEMORY_TYPE_CUDA_MANAGED);
+
+    ret = cuMemFree(dptr);
+    ASSERT_EQ(ret, CUDA_SUCCESS);
+    check_mem_free_events((void*)dptr, 0);
+
+    /* release with cuMemFreeAsync */
+    ret = cuMemAllocAsync(&dptr, 64, 0);
+    ASSERT_EQ(ret, CUDA_SUCCESS);
+    check_mem_alloc_events((void*)dptr, 64);
+
+    ret = cuMemFreeAsync(dptr, 0);
+    ASSERT_EQ(ret, CUDA_SUCCESS);
+    check_mem_free_events((void*)dptr, 0, UCS_MEMORY_TYPE_CUDA_MANAGED);
+}
+#endif
 
 UCS_TEST_F(cuda_hooks, test_cuda_Malloc_Free) {
     cudaError_t ret;
@@ -233,3 +259,28 @@ UCS_TEST_F(cuda_hooks, test_cudaMallocPitch) {
     ASSERT_EQ(ret, cudaSuccess);
     check_mem_free_events(devPtr, 0);
 }
+
+#if CUDA_VERSION >= 11020
+UCS_TEST_F(cuda_hooks, test_cudaMallocAsync) {
+    cudaError_t ret;
+    void *ptr;
+
+    /* release with cudaFree */
+    ret = cudaMallocAsync(&ptr, 64, 0);
+    ASSERT_EQ(ret, cudaSuccess);
+    check_mem_alloc_events(ptr, 64, UCS_MEMORY_TYPE_CUDA_MANAGED);
+
+    ret = cudaFree(ptr);
+    ASSERT_EQ(ret, cudaSuccess);
+    check_mem_free_events(ptr, 0);
+
+    /* release with cudaFreeAsync */
+    ret = cudaMallocAsync(&ptr, 64, 0);
+    ASSERT_EQ(ret, cudaSuccess);
+    check_mem_alloc_events(ptr, 64);
+
+    ret = cudaFreeAsync(ptr, 0);
+    ASSERT_EQ(ret, cudaSuccess);
+    check_mem_free_events(ptr, 0, UCS_MEMORY_TYPE_CUDA_MANAGED);
+}
+#endif

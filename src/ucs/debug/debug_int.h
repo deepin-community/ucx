@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2021.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2021. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -65,18 +65,6 @@ ucs_status_t ucs_debug_lookup_address(void *address, ucs_debug_address_info_t *i
 
 
 /**
- * @return Full path to current library.
- */
-const char *ucs_debug_get_lib_path();
-
-
-/**
- * @return UCS library loading address.
- */
-unsigned long ucs_debug_get_lib_base_addr();
-
-
-/**
  * Create a backtrace from the calling location.
  *
  * @param bckt          Backtrace object.
@@ -138,5 +126,14 @@ void ucs_handle_error(const char *message);
  */
 const char *ucs_debug_get_symbol_name(void *address);
 
+
+/**
+ * Check if signal should be processed by UCX as error.
+ *
+ * @param signum         Signal number to check.
+ *
+ * @return 1 if signal should be processes by UCX, 0 if passed to system.
+ */
+int ucs_debug_is_error_signal(int signum);
 
 #endif

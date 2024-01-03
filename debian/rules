@@ -18,19 +18,22 @@ ifeq ($(filter stage1,$(DEB_BUILD_PROFILES)),)
        JAVA := $(if $(filter $(DEB_TARGET_ARCH), $(NO_JAVA_ARCH)), \
                  ,--with-jdk-dir=/usr/lib/jvm/default-java --with-java=/usr/lib/jvm/default-java )
 endif
-#$(JAVA) 
 
 override_dh_auto_configure:
 	dh_auto_configure --  \
 		--enable-mt \
 		$(VERBS) \
 		$(NUMA) \
+		--disable-go \
 		--disable-backtrace-detail \
 		--disable-logging \
 		--enable-devel-headers \
 		--enable-examples \
 		--enable-cma
 
+override_dh_auto_clean:
+	dh_auto_clean
+	find  . -type l -delete
 override_dh_shlibdeps:
 	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
 

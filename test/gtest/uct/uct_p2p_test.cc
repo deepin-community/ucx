@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 * Copyright (C) ARM Ltd. 2016.  ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -148,14 +148,13 @@ void uct_p2p_test::test_xfer_print(O& os, send_func_t send, size_t length,
 void uct_p2p_test::test_xfer_multi(send_func_t send, size_t min_length,
                                    size_t max_length, unsigned flags)
 {
-    for (size_t i = 0; i < mem_buffer::supported_mem_types().size(); ++i) {
-        ucs_memory_type_t mem_type = mem_buffer::supported_mem_types()[i];
+    for (auto mem_type : mem_buffer::supported_mem_types()) {
         /* test mem type if md supports mem type
          * (or) if HOST MD can register mem type
          */
-        if (!((sender().md_attr().cap.access_mem_types & UCS_BIT(mem_type)) ||
-            ((sender().md_attr().cap.access_mem_types & UCS_BIT(UCS_MEMORY_TYPE_HOST)) &&
-		sender().md_attr().cap.reg_mem_types & UCS_BIT(mem_type)))) {
+        if (!((sender().md_attr().access_mem_types & UCS_BIT(mem_type)) ||
+            ((sender().md_attr().access_mem_types & UCS_BIT(UCS_MEMORY_TYPE_HOST)) &&
+		sender().md_attr().reg_mem_types & UCS_BIT(mem_type)))) {
             continue;
         }
         if (mem_type == UCS_MEMORY_TYPE_CUDA) {
@@ -176,23 +175,29 @@ void uct_p2p_test::test_xfer_multi_mem_type(send_func_t send, size_t min_length,
 
     ms << "memory_type:" << ucs_memory_type_names[mem_type] << " " << std::flush;
 
+    /* Trim at the max allocation available. Divide by 2 for
+       2 buffers + 0.5 for spare capacity */
+    max_length = ucs_min(max_length, sender().md_attr().max_alloc / 2.5);
+
     /* Trim at 4.1 GB */
     max_length = ucs_min(max_length, (size_t)(4.1 * (double)UCS_GBYTE));
 
-    /* Trim at max. phys memory */
-    max_length = ucs_min(max_length, ucs_get_phys_mem_size() / 8);
+    /* Trim by BAR1 size if relevant */
+    if ((mem_type == UCS_MEMORY_TYPE_CUDA) ||
+        (mem_type == UCS_MEMORY_TYPE_CUDA_MANAGED)) {
+        /* Allocate 40% x 2 (RX/TX) to accommodate send/receive buffers allocation */
+        max_length = ucs_min(max_length,
+                (size_t)(0.4 * mem_buffer::get_bar1_free_size()));
+    }
 
-    /* Trim at max. shared memory */
-    max_length = ucs_min(max_length, ucs_get_shmmax() * 0.8);
-
-    /* Trim when short of available memory */
-    max_length = ucs_min(max_length, ucs_get_memfree_size() / 4);
+    /* Trim by memory size */
+    max_length = ucs::limit_buffer_size(max_length);
 
     /* For large size, slow down if needed */
     if (max_length > UCS_MBYTE) {
         max_length = max_length / ucs::test_time_multiplier();
         if (RUNNING_ON_VALGRIND) {
-            max_length = ucs_min(max_length, 20u * UCS_MBYTE);
+            max_length = ucs_min(max_length, UCS_MBYTE);
         }
     }
 
@@ -217,6 +222,9 @@ void uct_p2p_test::test_xfer_multi_mem_type(send_func_t send, size_t min_length,
     repeat_count = (256 * UCS_KBYTE) / ((max_length + min_length) / 2);
     if (repeat_count > 1000) {
         repeat_count = 1000;
+    }
+    if (mem_type != UCS_MEMORY_TYPE_HOST) {
+        repeat_count /= 8;
     }
     repeat_count /= ucs::test_time_multiplier();
     if (repeat_count == 0) {
@@ -284,7 +292,7 @@ void uct_p2p_test::blocking_send(send_func_t send, uct_ep_h ep,
             /* Call flush on local and remote ifaces to progress data
              * (e.g. if call flush only on local iface, a target side may
              *  not be able to send PUT ACK to an initiator in case of TCP) */
-            flush(); 
+            flush();
         } else {
             /* explicit non-blocking mode */
             while (m_completion_count <= prev_comp_count) {

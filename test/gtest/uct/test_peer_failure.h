@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
@@ -15,14 +15,6 @@ extern "C" {
 
 
 class test_uct_peer_failure : public uct_test {
-private:
-    struct am_handler_setter {
-        am_handler_setter(test_uct_peer_failure *test);
-        void operator() (test_uct_peer_failure::entity *e);
-
-        test_uct_peer_failure* m_test;
-    };
-
 public:
     typedef struct {
         uct_pending_req_t uct;
@@ -56,7 +48,8 @@ public:
     static ucs_status_t pending_cb(uct_pending_req_t *self);
     static void purge_cb(uct_pending_req_t *self, void *arg);
     static ucs_status_t err_cb(void *arg, uct_ep_h ep, ucs_status_t status);
-    void kill_receiver();
+    void inject_error(unsigned idx = 0);
+    void kill_receiver(unsigned idx = 0);
     void new_receiver();
     void set_am_handlers();
     ucs_status_t send_am(int index);
@@ -66,13 +59,15 @@ public:
     void fill_resources(bool expect_error, ucs_time_t loop_end_limit);
 
 protected:
-    entity               *m_sender;
-    std::vector<entity *> m_receivers;
-    size_t                m_nreceivers;
-    size_t                m_tx_window;
-    size_t                m_err_count;
-    size_t                m_am_count;
-    static size_t         m_req_purge_count;
-    static const uint64_t m_required_caps;
+    entity                           *m_sender;
+    std::vector<entity *>            m_receivers;
+    std::map<uct_ep_h, ucs_status_t> m_failed_eps;
+    size_t                           m_nreceivers;
+    size_t                           m_tx_window;
+    size_t                           m_err_count;
+    std::vector<size_t>              m_am_count;
+    size_t                           m_req_purge_count;
+    size_t                           m_req_pending_count;
+    static const uint64_t            m_required_caps;
 };
 

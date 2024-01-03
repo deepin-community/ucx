@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -125,9 +125,8 @@ public:
     static void* get_unused_address(size_t length)
     {
         void *address = NULL;
-        ucs_status_t status = ucs_mmap_alloc(&length, &address, 0
-                                             UCS_MEMTRACK_NAME("test_dummy"));
-        ASSERT_UCS_OK(status, << "length = " << length);
+        ucs_status_t status = ucs_mmap_alloc(&length, &address, 0, "test_dummy");
+        ASSERT_UCS_OK(status, << " length = " << length);
         status = ucs_mmap_free(address, length);
         ASSERT_UCS_OK(status);
         /* coverity[use_after_free] */

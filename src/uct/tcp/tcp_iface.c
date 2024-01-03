@@ -1,6 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2019.  ALL RIGHTS RESERVED.
- * Copyright (c) 2019, NVIDIA CORPORATION. All rights reserved.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
  * Copyright (C) Huawei Technologies Co., Ltd. 2020.  ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
@@ -18,7 +17,9 @@
 #include <sys/poll.h>
 #include <netinet/tcp.h>
 #include <dirent.h>
+#include <float.h>
 
+#define UCT_TCP_IFACE_NETDEV_DIR "/sys/class/net"
 
 extern ucs_class_t UCS_CLASS_DECL_NAME(uct_tcp_iface_t);
 
@@ -30,7 +31,7 @@ static ucs_config_field_t uct_tcp_iface_config_table[] = {
   {"TX_SEG_SIZE", "8kb",
    "Size of send copy-out buffer",
    ucs_offsetof(uct_tcp_iface_config_t, tx_seg_size), UCS_CONFIG_TYPE_MEMUNITS},
-  
+
   {"RX_SEG_SIZE", "64kb",
    "Size of receive copy-out buffer",
    ucs_offsetof(uct_tcp_iface_config_t, rx_seg_size), UCS_CONFIG_TYPE_MEMUNITS},
@@ -75,16 +76,20 @@ static ucs_config_field_t uct_tcp_iface_config_table[] = {
 
   UCT_TCP_SYN_CNT(ucs_offsetof(uct_tcp_iface_config_t, syn_cnt)),
 
-  UCT_IFACE_MPOOL_CONFIG_FIELDS("TX_", -1, 8, "send",
+  UCT_IFACE_MPOOL_CONFIG_FIELDS("TX_", -1, 8, 128m, 1.0, "send",
                                 ucs_offsetof(uct_tcp_iface_config_t, tx_mpool), ""),
 
-  UCT_IFACE_MPOOL_CONFIG_FIELDS("RX_", -1, 8, "receive",
+  UCT_IFACE_MPOOL_CONFIG_FIELDS("RX_", -1, 8, 128m, 1.0, "receive",
                                 ucs_offsetof(uct_tcp_iface_config_t, rx_mpool), ""),
 
   {"PORT_RANGE", "0",
    "Generate a random TCP port number from that range. A value of zero means\n"
    "let the operating system select the port number.",
    ucs_offsetof(uct_tcp_iface_config_t, port_range), UCS_CONFIG_TYPE_RANGE_SPEC},
+
+   {"MAX_BW", "2200MBs",
+    "Upper bound to TCP iface bandwidth. 'auto' means BW is unlimited.",
+    ucs_offsetof(uct_tcp_iface_config_t, max_bw), UCS_CONFIG_TYPE_BW},
 
 #ifdef UCT_TCP_EP_KEEPALIVE
   {"KEEPIDLE", UCS_PP_MAKE_STRING(UCT_TCP_EP_DEFAULT_KEEPALIVE_IDLE) "s",
@@ -124,10 +129,11 @@ static ucs_status_t uct_tcp_iface_get_device_address(uct_iface_h tl_iface,
     ucs_status_t status;
 
     dev_addr->flags     = 0;
-    dev_addr->sa_family = iface->config.ifaddr.sin_family;
+    dev_addr->sa_family = saddr->sa_family;
 
     if (ucs_sockaddr_is_inaddr_loopback(saddr)) {
         dev_addr->flags |= UCT_TCP_DEVICE_ADDR_FLAG_LOOPBACK;
+        memset(pack_ptr, 0, sizeof(uct_iface_local_addr_ns_t));
         uct_iface_get_local_address(pack_ptr, UCS_SYS_NS_TYPE_NET);
     } else {
         in_addr = ucs_sockaddr_get_inet_addr(saddr);
@@ -167,8 +173,17 @@ uct_tcp_iface_get_address(uct_iface_h tl_iface, uct_iface_addr_t *addr)
     uct_tcp_iface_t *iface           = ucs_derived_of(tl_iface,
                                                       uct_tcp_iface_t);
     uct_tcp_iface_addr_t *iface_addr = (uct_tcp_iface_addr_t*)addr;
+    ucs_status_t status;
+    uint16_t port;
 
-    iface_addr->port = iface->config.ifaddr.sin_port;
+    status = ucs_sockaddr_get_port((struct sockaddr*)&iface->config.ifaddr,
+                                   &port);
+    if (status != UCS_OK) {
+        return status;
+    }
+
+    iface_addr->port = htons(port);
+
     return UCS_OK;
 }
 
@@ -176,8 +191,21 @@ static int uct_tcp_iface_is_reachable(const uct_iface_h tl_iface,
                                       const uct_device_addr_t *dev_addr,
                                       const uct_iface_addr_t *iface_addr)
 {
+    uct_tcp_iface_t *iface              = ucs_derived_of(tl_iface,
+                                                         uct_tcp_iface_t);
     uct_tcp_device_addr_t *tcp_dev_addr = (uct_tcp_device_addr_t*)dev_addr;
     uct_iface_local_addr_ns_t *local_addr_ns;
+
+    if (iface->config.ifaddr.ss_family != tcp_dev_addr->sa_family) {
+        return 0;
+    }
+
+    /* Loopback can connect only to loopback */
+    if (!!(tcp_dev_addr->flags & UCT_TCP_DEVICE_ADDR_FLAG_LOOPBACK) !=
+        ucs_sockaddr_is_inaddr_loopback(
+                (const struct sockaddr*)&iface->config.ifaddr)) {
+        return 0;
+    }
 
     if (tcp_dev_addr->flags & UCT_TCP_DEVICE_ADDR_FLAG_LOOPBACK) {
         local_addr_ns = (uct_iface_local_addr_ns_t*)(tcp_dev_addr + 1);
@@ -190,6 +218,50 @@ static int uct_tcp_iface_is_reachable(const uct_iface_h tl_iface,
     return 1;
 }
 
+static ucs_status_t
+uct_tcp_iface_parse_virtual_dev(const struct dirent *entry, void *ctx)
+{
+    static const char *low_level_dev_prefix = "lower_";
+    ucs_string_buffer_t *dev_path           = ctx;
+
+    if (!strncmp(entry->d_name, low_level_dev_prefix,
+                 strlen(low_level_dev_prefix))) {
+        ucs_string_buffer_appendf(dev_path, "/%s", entry->d_name);
+        return UCS_ERR_CANCELED;
+    }
+
+    return UCS_OK;
+}
+
+static const char *
+uct_tcp_iface_get_sysfs_path(const char *dev_name, char *path_buffer)
+{
+    ucs_string_buffer_t dev_path = UCS_STRING_BUFFER_INITIALIZER;
+    const char *sysfs_path;
+    ucs_status_t status;
+
+    /* Find and return the correct device sysfs path:
+     * 1) For regular device, use regular sysfs form.
+     * 2) For virtual device (RoCE LAG/VLAN), search for symbolic link of the
+     *    form "lower_*" */
+    ucs_string_buffer_appendf(&dev_path, "%s/%s", UCT_TCP_IFACE_NETDEV_DIR,
+                              dev_name);
+
+    status = ucs_sys_readdir(ucs_string_buffer_cstr(&dev_path),
+                             uct_tcp_iface_parse_virtual_dev, &dev_path);
+    if (status != UCS_ERR_CANCELED) {
+        ucs_string_buffer_cleanup(&dev_path);
+        return NULL;
+    }
+
+    /* 'path_buffer' size is PATH_MAX */
+    sysfs_path = ucs_topo_resolve_sysfs_path(ucs_string_buffer_cstr(&dev_path),
+                                             path_buffer);
+
+    ucs_string_buffer_cleanup(&dev_path);
+    return sysfs_path;
+}
+
 static ucs_status_t uct_tcp_iface_query(uct_iface_h tl_iface,
                                         uct_iface_attr_t *attr)
 {
@@ -198,14 +270,23 @@ static ucs_status_t uct_tcp_iface_query(uct_iface_h tl_iface,
                              sizeof(uct_tcp_am_hdr_t);
     ucs_status_t status;
     int is_default;
+    double pci_bw, network_bw, calculated_bw;
+    char path_buffer[PATH_MAX];
+    const char *sysfs_path;
 
     uct_base_iface_query(&iface->super, attr);
 
-    status = uct_tcp_netif_caps(iface->if_name, &attr->latency.c,
-                                &attr->bandwidth.shared);
+    status = uct_tcp_netif_caps(iface->if_name, &attr->latency.c, &network_bw);
     if (status != UCS_OK) {
         return status;
     }
+
+    sysfs_path             = uct_tcp_iface_get_sysfs_path(iface->if_name, path_buffer);
+    pci_bw                 = ucs_topo_get_pci_bw(iface->if_name, sysfs_path);
+    calculated_bw          = ucs_min(pci_bw, network_bw);
+
+    /* Bandwidth is bounded by TCP stack computation time */
+    attr->bandwidth.shared = ucs_min(calculated_bw, iface->config.max_bw);
 
     attr->ep_addr_len      = sizeof(uct_tcp_ep_addr_t);
     attr->iface_addr_len   = sizeof(uct_tcp_iface_addr_t);
@@ -339,7 +420,7 @@ uct_tcp_iface_connect_handler(int listen_fd, ucs_event_set_types_t events,
                               void *arg)
 {
     uct_tcp_iface_t *iface = arg;
-    struct sockaddr_in peer_addr;
+    struct sockaddr_storage peer_addr;
     socklen_t addrlen;
     ucs_status_t status;
     int fd;
@@ -358,7 +439,9 @@ uct_tcp_iface_connect_handler(int listen_fd, ucs_event_set_types_t events,
         }
         ucs_assert(fd != -1);
 
-        status = uct_tcp_cm_handle_incoming_conn(iface, &peer_addr, fd);
+        status = uct_tcp_cm_handle_incoming_conn(iface,
+                                                 (struct sockaddr*)&peer_addr,
+                                                 fd);
         if (status != UCS_OK) {
             ucs_close_fd(&fd);
             return;
@@ -408,7 +491,7 @@ static uct_iface_ops_t uct_tcp_iface_ops = {
     .ep_create                = uct_tcp_ep_create,
     .ep_destroy               = uct_tcp_ep_destroy,
     .ep_get_address           = uct_tcp_ep_get_address,
-    .ep_connect_to_ep         = uct_tcp_ep_connect_to_ep,
+    .ep_connect_to_ep         = uct_base_ep_connect_to_ep,
     .iface_flush              = uct_tcp_iface_flush,
     .iface_fence              = uct_base_iface_fence,
     .iface_progress_enable    = uct_base_iface_progress_enable,
@@ -425,10 +508,11 @@ static uct_iface_ops_t uct_tcp_iface_ops = {
 
 static ucs_status_t uct_tcp_iface_server_init(uct_tcp_iface_t *iface)
 {
-    struct sockaddr_in bind_addr = iface->config.ifaddr;
-    unsigned port_range_start    = iface->port_range.first;
-    unsigned port_range_end      = iface->port_range.last;
+    struct sockaddr_storage bind_addr = iface->config.ifaddr;
+    unsigned port_range_start         = iface->port_range.first;
+    unsigned port_range_end           = iface->port_range.last;
     ucs_status_t status;
+    size_t addr_len;
     int port, retry;
 
     /* retry is 1 for a range of ports or when port value is zero.
@@ -445,14 +529,19 @@ static ucs_status_t uct_tcp_iface_server_init(uct_tcp_iface_t *iface)
             port = 0;   /* let the operating system choose the port */
         }
 
-        status = ucs_sockaddr_set_port((struct sockaddr *)&bind_addr, port);
+        status = ucs_sockaddr_set_port((struct sockaddr*)&bind_addr, port);
         if (status != UCS_OK) {
             break;
         }
 
-        status = ucs_socket_server_init((struct sockaddr *)&bind_addr,
-                                        sizeof(bind_addr), ucs_socket_max_conn(),
-                                        retry, 0, &iface->listen_fd);
+        status = ucs_sockaddr_sizeof((struct sockaddr*)&bind_addr, &addr_len);
+        if (status != UCS_OK) {
+            return status;
+        }
+
+        status = ucs_socket_server_init((struct sockaddr*)&bind_addr, addr_len,
+                                        ucs_socket_max_conn(), retry, 0,
+                                        &iface->listen_fd);
     } while (retry && (status == UCS_ERR_BUSY));
 
     return status;
@@ -460,10 +549,11 @@ static ucs_status_t uct_tcp_iface_server_init(uct_tcp_iface_t *iface)
 
 static ucs_status_t uct_tcp_iface_listener_init(uct_tcp_iface_t *iface)
 {
-    struct sockaddr_in bind_addr = iface->config.ifaddr;
-    socklen_t socklen            = sizeof(bind_addr);
+    struct sockaddr_storage bind_addr = iface->config.ifaddr;
+    socklen_t socklen                 = sizeof(bind_addr);
     char ip_port_str[UCS_SOCKADDR_STRING_LEN];
     ucs_status_t status;
+    uint16_t port;
     int ret;
 
     status = uct_tcp_iface_server_init(iface);
@@ -472,14 +562,23 @@ static ucs_status_t uct_tcp_iface_listener_init(uct_tcp_iface_t *iface)
     }
 
     /* Get the port which was selected for the socket */
-    ret = getsockname(iface->listen_fd, (struct sockaddr *)&bind_addr, &socklen);
+    ret = getsockname(iface->listen_fd, (struct sockaddr*)&bind_addr, &socklen);
     if (ret < 0) {
         ucs_error("getsockname(fd=%d) failed: %m", iface->listen_fd);
         status = UCS_ERR_IO_ERROR;
         goto err_close_sock;
     }
 
-    iface->config.ifaddr.sin_port = bind_addr.sin_port;
+    status = ucs_sockaddr_get_port((struct sockaddr*)&bind_addr, &port);
+    if (status != UCS_OK) {
+        goto err_close_sock;
+    }
+
+    status = ucs_sockaddr_set_port((struct sockaddr*)&iface->config.ifaddr,
+                                   port);
+    if (status != UCS_OK) {
+        goto err_close_sock;
+    }
 
     /* Register event handler for incoming connections */
     status = ucs_async_set_event_handler(iface->super.worker->async->mode,
@@ -503,58 +602,21 @@ err:
     return status;
 }
 
-static ucs_status_t uct_tcp_iface_set_port_range(uct_tcp_iface_t *iface,
-                                                 uct_tcp_iface_config_t *config)
-{
-    ucs_range_spec_t system_port_range;
-    unsigned start_range, end_range;
-    ucs_status_t status;
-
-    if ((config->port_range.first == 0) && (config->port_range.last == 0)) {
-        /* using a random port */
-        goto out_set_config;
-    }
-
-    /* get the system configuration for usable ports range */
-    status = ucs_sockaddr_get_ip_local_port_range(&system_port_range);
-    if (status != UCS_OK) {
-        /* using the user's config */
-        goto out_set_config;
-    }
-
-    /* find a common range between the user's ports range and the one on the system */
-    start_range = ucs_max(system_port_range.first, config->port_range.first);
-    end_range   = ucs_min(system_port_range.last, config->port_range.last);
-
-    if (start_range > end_range) {
-        /* there is no common range */
-        ucs_error("the requested TCP port range (%d-%d) is outside of system's "
-                  "configured port range (%d-%d)",
-                  config->port_range.first, config->port_range.last,
-                  system_port_range.first, system_port_range.last);
-        status = UCS_ERR_INVALID_PARAM;
-        goto out;
-    }
-
-    iface->port_range.first = start_range;
-    iface->port_range.last  = end_range;
-    ucs_debug("using TCP port range: %d-%d", iface->port_range.first, iface->port_range.last);
-    return UCS_OK;
-
-out_set_config:
-    iface->port_range.first = config->port_range.first;
-    iface->port_range.last  = config->port_range.last;
-    ucs_debug("using TCP port range: %d-%d", iface->port_range.first, iface->port_range.last);
-    return UCS_OK;
-out:
-    return status;
-}
-
 static ucs_mpool_ops_t uct_tcp_mpool_ops = {
-    ucs_mpool_chunk_malloc,
-    ucs_mpool_chunk_free,
-    NULL,
-    NULL
+    .chunk_alloc   = ucs_mpool_chunk_malloc,
+    .chunk_release = ucs_mpool_chunk_free,
+    .obj_init      = NULL,
+    .obj_cleanup   = NULL,
+    .obj_str       = NULL
+};
+
+static uct_iface_internal_ops_t uct_tcp_iface_internal_ops = {
+    .iface_estimate_perf   = uct_base_iface_estimate_perf,
+    .iface_vfs_refresh     = (uct_iface_vfs_refresh_func_t)ucs_empty_function,
+    .ep_query              = (uct_ep_query_func_t)ucs_empty_function_return_unsupported,
+    .ep_invalidate         = (uct_ep_invalidate_func_t)ucs_empty_function_return_unsupported,
+    .ep_connect_to_ep_v2   = uct_tcp_ep_connect_to_ep_v2,
+    .iface_is_reachable_v2 = uct_base_iface_is_reachable_v2
 };
 
 static UCS_CLASS_INIT_FUNC(uct_tcp_iface_t, uct_md_h md, uct_worker_h worker,
@@ -563,7 +625,10 @@ static UCS_CLASS_INIT_FUNC(uct_tcp_iface_t, uct_md_h md, uct_worker_h worker,
 {
     uct_tcp_iface_config_t *config = ucs_derived_of(tl_config,
                                                     uct_tcp_iface_config_t);
+    uct_tcp_md_t *tcp_md           = ucs_derived_of(md, uct_tcp_md_t);
     ucs_status_t status;
+    int i;
+    ucs_mpool_params_t mp_params;
 
     UCT_CHECK_PARAM(params->field_mask & UCT_IFACE_PARAM_FIELD_OPEN_MODE,
                     "UCT_IFACE_PARAM_FIELD_OPEN_MODE is not defined");
@@ -578,7 +643,7 @@ static UCS_CLASS_INIT_FUNC(uct_tcp_iface_t, uct_md_h md, uct_worker_h worker,
     }
 
     UCS_CLASS_CALL_SUPER_INIT(
-            uct_base_iface_t, &uct_tcp_iface_ops, &uct_base_iface_internal_ops,
+            uct_base_iface_t, &uct_tcp_iface_ops, &uct_tcp_iface_internal_ops,
             md, worker, params,
             tl_config UCS_STATS_ARG(
                     (params->field_mask & UCT_IFACE_PARAM_FIELD_STATS_ROOT) ?
@@ -638,6 +703,8 @@ static UCS_CLASS_INIT_FUNC(uct_tcp_iface_t, uct_md_h md, uct_worker_h worker,
     self->sockopt.rcvbuf           = config->sockopt.rcvbuf;
     self->config.keepalive.cnt     = config->keepalive.cnt;
     self->config.keepalive.intvl   = config->keepalive.intvl;
+    self->port_range.first         = config->port_range.first;
+    self->port_range.last          = config->port_range.last;
 
     if (config->keepalive.idle != UCS_MEMUNITS_AUTO) {
         /* TCP iface configuration sets the keepalive interval */
@@ -651,53 +718,66 @@ static UCS_CLASS_INIT_FUNC(uct_tcp_iface_t, uct_md_h md, uct_worker_h worker,
             ucs_time_from_sec(UCT_TCP_EP_DEFAULT_KEEPALIVE_IDLE);
     }
 
-    status = uct_tcp_iface_set_port_range(self, config);
-    if (status != UCS_OK) {
-        goto err;
-    }
-
-    ucs_list_head_init(&self->ep_list);
-    ucs_conn_match_init(&self->conn_match_ctx,
-                        ucs_field_sizeof(uct_tcp_ep_t, peer_addr),
-                        &uct_tcp_cm_conn_match_ops);
-    status = ucs_ptr_map_init(&self->ep_ptr_map);
-    ucs_assert_always(status == UCS_OK);
+    self->config.max_bw = UCS_CONFIG_DBL_IS_AUTO(config->max_bw) ?
+                                  DBL_MAX :
+                                  config->max_bw;
 
     if (self->config.tx_seg_size > self->config.rx_seg_size) {
         ucs_error("RX segment size (%zu) must be >= TX segment size (%zu)",
                   self->config.rx_seg_size, self->config.tx_seg_size);
-        return UCS_ERR_INVALID_PARAM;
+        status = UCS_ERR_INVALID_PARAM;
+        goto err;
     }
 
-    status = ucs_mpool_init(&self->tx_mpool, 0, self->config.tx_seg_size,
-                            0, UCS_SYS_CACHE_LINE_SIZE,
-                            (config->tx_mpool.bufs_grow == 0) ?
-                            32 : config->tx_mpool.bufs_grow,
-                            config->tx_mpool.max_bufs,
-                            &uct_tcp_mpool_ops, "uct_tcp_iface_tx_buf_mp");
+    ucs_mpool_params_reset(&mp_params);
+    uct_iface_mpool_config_copy(&mp_params, &config->tx_mpool);
+    mp_params.elems_per_chunk = (config->tx_mpool.bufs_grow == 0) ?
+                                32 : config->tx_mpool.bufs_grow;
+    mp_params.elem_size       = self->config.tx_seg_size;
+    mp_params.ops             = &uct_tcp_mpool_ops;
+    mp_params.name            = "uct_tcp_iface_tx_buf_mp";
+    status = ucs_mpool_init(&mp_params, &self->tx_mpool);
     if (status != UCS_OK) {
         goto err;
     }
 
-    status = ucs_mpool_init(&self->rx_mpool, 0, self->config.rx_seg_size * 2,
-                            0, UCS_SYS_CACHE_LINE_SIZE,
-                            (config->rx_mpool.bufs_grow == 0) ?
-                            32 : config->rx_mpool.bufs_grow,
-                            config->rx_mpool.max_bufs,
-                            &uct_tcp_mpool_ops, "uct_tcp_iface_rx_buf_mp");
+    ucs_mpool_params_reset(&mp_params);
+    uct_iface_mpool_config_copy(&mp_params, &config->rx_mpool);
+    mp_params.elems_per_chunk = (config->rx_mpool.bufs_grow == 0) ?
+                                32 : config->rx_mpool.bufs_grow;
+    mp_params.elem_size       = self->config.rx_seg_size * 2;
+    mp_params.ops             = &uct_tcp_mpool_ops;
+    mp_params.name            = "uct_tcp_iface_rx_buf_mp";
+    status = ucs_mpool_init(&mp_params, &self->rx_mpool);
     if (status != UCS_OK) {
         goto err_cleanup_tx_mpool;
     }
 
-    status = ucs_sockaddr_get_ifaddr(self->if_name, &self->config.ifaddr);
+    for (i = 0; i < tcp_md->config.af_prio_count; i++) {
+        status = ucs_netif_get_addr(self->if_name,
+                                    tcp_md->config.af_prio_list[i],
+                                    (struct sockaddr*)&self->config.ifaddr,
+                                    (struct sockaddr*)&self->config.netmask);
+        if (status == UCS_OK) {
+            break;
+        }
+    }
+
     if (status != UCS_OK) {
         goto err_cleanup_rx_mpool;
     }
 
-    status = ucs_sockaddr_get_ifmask(self->if_name, &self->config.netmask);
+    status = ucs_sockaddr_sizeof((struct sockaddr*)&self->config.ifaddr,
+                                 &self->config.sockaddr_len);
     if (status != UCS_OK) {
-        goto err_cleanup_rx_mpool;
+        return status;
     }
+
+    ucs_list_head_init(&self->ep_list);
+    ucs_conn_match_init(&self->conn_match_ctx, self->config.sockaddr_len,
+                        UCT_TCP_CM_CONN_SN_MAX, &uct_tcp_cm_conn_match_ops);
+    status = UCS_PTR_MAP_INIT(tcp_ep, &self->ep_ptr_map);
+    ucs_assert_always(status == UCS_OK);
 
     status = ucs_event_set_create(&self->event_set);
     if (status != UCS_OK) {
@@ -752,12 +832,12 @@ void uct_tcp_iface_remove_ep(uct_tcp_ep_t *ep)
 }
 
 int uct_tcp_iface_is_self_addr(uct_tcp_iface_t *iface,
-                               const struct sockaddr_in *peer_addr)
+                               const struct sockaddr *peer_addr)
 {
     ucs_status_t status;
     int cmp;
 
-    cmp = ucs_sockaddr_cmp((const struct sockaddr*)peer_addr,
+    cmp = ucs_sockaddr_cmp(peer_addr,
                            (const struct sockaddr*)&iface->config.ifaddr,
                            &status);
     ucs_assert(status == UCS_OK);
@@ -781,7 +861,7 @@ static UCS_CLASS_CLEANUP_FUNC(uct_tcp_iface_t)
 
     uct_tcp_iface_ep_list_cleanup(self);
     ucs_conn_match_cleanup(&self->conn_match_ctx);
-    ucs_ptr_map_destroy(&self->ep_ptr_map);
+    UCS_PTR_MAP_DESTROY(tcp_ep, &self->ep_ptr_map);
 
     ucs_mpool_cleanup(&self->rx_mpool, 1);
     ucs_mpool_cleanup(&self->tx_mpool, 1);
@@ -799,16 +879,21 @@ ucs_status_t uct_tcp_query_devices(uct_md_h md,
                                    uct_tl_device_resource_t **devices_p,
                                    unsigned *num_devices_p)
 {
+    uct_tcp_md_t *tcp_md               = ucs_derived_of(md, uct_tcp_md_t);
+    const unsigned sys_device_priority = 10;
     uct_tl_device_resource_t *devices, *tmp;
-    static const char *netdev_dir = "/sys/class/net";
     struct dirent *entry;
     unsigned num_devices;
+    int is_active, i;
     ucs_status_t status;
     DIR *dir;
+    const char *sysfs_path;
+    char path_buffer[PATH_MAX];
+    ucs_sys_device_t sys_dev;
 
-    dir = opendir(netdev_dir);
+    dir = opendir(UCT_TCP_IFACE_NETDEV_DIR);
     if (dir == NULL) {
-        ucs_error("opendir(%s) failed: %m", netdev_dir);
+        ucs_error("opendir(%s) failed: %m", UCT_TCP_IFACE_NETDEV_DIR);
         status = UCS_ERR_IO_ERROR;
         goto out;
     }
@@ -820,7 +905,7 @@ ucs_status_t uct_tcp_query_devices(uct_md_h md,
         entry = readdir(dir);
         if (entry == NULL) {
             if (errno != 0) {
-                ucs_error("readdir(%s) failed: %m", netdev_dir);
+                ucs_error("readdir(%s) failed: %m", UCT_TCP_IFACE_NETDEV_DIR);
                 ucs_free(devices);
                 status = UCS_ERR_IO_ERROR;
                 goto out_closedir;
@@ -838,7 +923,16 @@ ucs_status_t uct_tcp_query_devices(uct_md_h md,
             continue;
         }
 
-        if (!ucs_netif_is_active(entry->d_name)) {
+        is_active = 0;
+        for (i = 0; i < tcp_md->config.af_prio_count; i++) {
+            if (ucs_netif_is_active(entry->d_name,
+                                    tcp_md->config.af_prio_list[i])) {
+                is_active = 1;
+                break;
+            }
+        }
+
+        if (!is_active) {
             continue;
         }
 
@@ -851,11 +945,15 @@ ucs_status_t uct_tcp_query_devices(uct_md_h md,
         }
         devices = tmp;
 
+        sysfs_path = uct_tcp_iface_get_sysfs_path(entry->d_name, path_buffer);
+        sys_dev    = ucs_topo_get_sysfs_dev(entry->d_name, sysfs_path,
+                                            sys_device_priority);
+
         ucs_snprintf_zero(devices[num_devices].name,
                           sizeof(devices[num_devices].name),
                           "%s", entry->d_name);
         devices[num_devices].type       = UCT_DEVICE_TYPE_NET;
-        devices[num_devices].sys_device = UCS_SYS_DEVICE_ID_UNKNOWN;
+        devices[num_devices].sys_device = sys_dev;
         ++num_devices;
     }
 
@@ -880,6 +978,8 @@ int uct_tcp_keepalive_is_enabled(uct_tcp_iface_t *iface)
 #endif /* UCT_TCP_EP_KEEPALIVE */
 }
 
-UCT_TL_DEFINE(&uct_tcp_component, tcp, uct_tcp_query_devices, uct_tcp_iface_t,
-              UCT_TCP_CONFIG_PREFIX, uct_tcp_iface_config_table,
-              uct_tcp_iface_config_t);
+UCT_TL_DEFINE_ENTRY(&uct_tcp_component, tcp, uct_tcp_query_devices,
+                    uct_tcp_iface_t, UCT_TCP_CONFIG_PREFIX,
+                    uct_tcp_iface_config_table, uct_tcp_iface_config_t);
+
+UCT_SINGLE_TL_INIT(&uct_tcp_component, tcp,,,)

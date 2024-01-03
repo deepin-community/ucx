@@ -8,10 +8,9 @@ Build-Depends: debhelper-compat (= 13),
  libnuma-dev [!hurd-i386 !kfreebsd-i386 !kfreebsd-amd64],
  librdmacm-dev, 
  libfuse3-dev,
- default-jdk [!hppa !hurd-i386 !ia64] <!stage1>,
  doxygen,
  texlive-latex-base
-Standards-Version: 4.6.0
+Standards-Version: 4.6.2
 Vcs-Browser: https://salsa.debian.org:/science-team/ucx.git
 Vcs-Git: https://salsa.debian.org:/science-team/ucx.git -b debian/latest
 Homepage: https://www.openucx.org

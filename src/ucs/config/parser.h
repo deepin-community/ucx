@@ -1,5 +1,5 @@
 /*
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019. ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -18,14 +18,14 @@
 
 #define UCS_DEFAULT_ENV_PREFIX "UCX_"
 #define UCS_CONFIG_ARRAY_MAX   128
-#define UCX_CONF_FILE          UCX_CONF_DIR "/ucx.conf"
+#define UCX_CONFIG_FILE_NAME   "ucx.conf"
 
 BEGIN_C_DECLS
 
 /** @file parser.h */
 
 /*
- * Configuration varaibles syntax:
+ * Configuration variables syntax:
  *
  * name: <env_prefix><table_prefix><field_name>
  *
@@ -64,6 +64,15 @@ typedef struct ucs_config_field {
 } ucs_config_field_t;
 
 
+typedef struct ucs_config_cached_key {
+    char            *key;   /* Cached configuration key */
+    char            *value; /* Cached configuration value */
+    int             used;   /* Whether this configuration was
+                             * applied successfully */
+    ucs_list_link_t list;   /* Element in a list of key/value entries */
+} ucs_config_cached_key_t;
+
+
 typedef struct ucs_ib_port_spec {
     char                     *device_name;
     unsigned                 port_num;
@@ -76,12 +85,22 @@ typedef struct ucs_range_spec {
 } ucs_range_spec_t;
 
 
+/**
+ * Configuration table flags
+ */
+typedef enum {
+    /* Table has been already loaded by config parser */
+    UCS_CONFIG_TABLE_FLAG_LOADED = UCS_BIT(0)
+} ucs_config_table_flags_t;
+
+
 typedef struct ucs_config_global_list_entry {
     const char               *name;    /* configuration table name */
     const char               *prefix;  /* configuration prefix */
     ucs_config_field_t       *table;   /* array of configuration fields */
     size_t                   size;     /* size of config structure */
     ucs_list_link_t          list;     /* entry in global list */
+    uint8_t                  flags;    /* config table flags */
 } ucs_config_global_list_entry_t;
 
 
@@ -110,15 +129,31 @@ typedef struct ucs_config_bw_spec {
     }
 
 #define UCS_CONFIG_REGISTER_TABLE(_table, _name, _prefix, _type, _list) \
+    UCS_CONFIG_DECLARE_TABLE(_table, _name, _prefix, _type) \
+    UCS_CONFIG_REGISTER_TABLE_ENTRY(&_table##_config_entry, _list);
+
+#define UCS_CONFIG_DECLARE_TABLE(_table, _name, _prefix, _type) \
     static ucs_config_global_list_entry_t _table##_config_entry = { \
         .table  = _table, \
         .name   = _name, \
         .prefix = _prefix, \
-        .size   = sizeof(_type) \
-    }; \
-    UCS_CONFIG_REGISTER_TABLE_ENTRY(&_table##_config_entry, _list);
+        .size   = sizeof(_type), \
+        .flags  = 0 \
+    };
+
+
+#define UCS_CONFIG_GET_TABLE(_table) &_table##_config_entry
+
+
+#define UCS_CONFIG_ADD_TABLE(_table, _list) \
+    ucs_list_add_tail(_list, &(_table##_config_entry).list)
+
+#define UCS_CONFIG_REMOVE_TABLE(_table) \
+    ucs_list_del(&(_table##_config_entry).list)
 
 extern ucs_list_link_t ucs_config_global_list;
+
+#define UCS_CONFIG_UINT_ENUM_INDEX(_value) (UINT_MAX - (_value))
 
 /*
  * Parsing and printing different data types
@@ -141,6 +176,9 @@ int ucs_config_sscanf_ulong(const char *buf, void *dest, const void *arg);
 int ucs_config_sprintf_ulong(char *buf, size_t max, const void *src, const void *arg);
 ucs_status_t ucs_config_clone_ulong(const void *src, void *dest, const void *arg);
 
+int ucs_config_sscanf_pos_double(const char *buf, void *dest, const void *arg);
+int ucs_config_sprintf_pos_double(char *buf, size_t max, const void *src,
+                                  const void *arg);
 int ucs_config_sscanf_double(const char *buf, void *dest, const void *arg);
 int ucs_config_sprintf_double(char *buf, size_t max, const void *src, const void *arg);
 ucs_status_t ucs_config_clone_double(const void *src, void *dest, const void *arg);
@@ -163,6 +201,10 @@ int ucs_config_sprintf_on_off_auto(char *buf, size_t max, const void *src, const
 int ucs_config_sscanf_enum(const char *buf, void *dest, const void *arg);
 int ucs_config_sprintf_enum(char *buf, size_t max, const void *src, const void *arg);
 void ucs_config_help_enum(char *buf, size_t max, const void *arg);
+
+int ucs_config_sscanf_uint_enum(const char *buf, void *dest, const void *arg);
+int ucs_config_sprintf_uint_enum(char *buf, size_t max, const void *src, const void *arg);
+void ucs_config_help_uint_enum(char *buf, size_t max, const void *arg);
 
 int ucs_config_sscanf_bitmap(const char *buf, void *dest, const void *arg);
 int ucs_config_sprintf_bitmap(char *buf, size_t max, const void *src, const void *arg);
@@ -256,6 +298,11 @@ void ucs_config_help_generic(char *buf, size_t max, const void *arg);
                                     ucs_config_clone_double,     ucs_config_release_nop, \
                                     ucs_config_help_generic,     "floating point number"}
 
+#define UCS_CONFIG_TYPE_POS_DOUBLE {ucs_config_sscanf_pos_double, ucs_config_sprintf_pos_double, \
+                                    ucs_config_clone_double,      ucs_config_release_nop, \
+                                    ucs_config_help_generic, \
+                                    "positive floating point number or \"auto\""}
+
 #define UCS_CONFIG_TYPE_HEX        {ucs_config_sscanf_hex,       ucs_config_sprintf_hex, \
                                     ucs_config_clone_uint,       ucs_config_release_nop, \
                                     ucs_config_help_generic, \
@@ -284,6 +331,10 @@ void ucs_config_help_generic(char *buf, size_t max, const void *arg);
 #define UCS_CONFIG_TYPE_ENUM(t)    {ucs_config_sscanf_enum,      ucs_config_sprintf_enum, \
                                     ucs_config_clone_uint,       ucs_config_release_nop, \
                                     ucs_config_help_enum,        t}
+
+#define UCS_CONFIG_TYPE_UINT_ENUM(t) {ucs_config_sscanf_uint_enum, ucs_config_sprintf_uint_enum, \
+                                      ucs_config_clone_uint,       ucs_config_release_nop, \
+                                      ucs_config_help_uint_enum,   t}
 
 #define UCS_CONFIG_TYPE_BITMAP(t)  {ucs_config_sscanf_bitmap,    ucs_config_sprintf_bitmap, \
                                     ucs_config_clone_uint,       ucs_config_release_nop, \
@@ -358,10 +409,11 @@ UCS_CONFIG_DECLARE_ARRAY(string)
 
 
 /**
- * Helpers for Bandwidth units (see UCS_CONFIG_TYPE_BW)
+ * Helpers for positive double and bandwidth units (see UCS_CONFIG_TYPE_BW)
  */
-#define UCS_CONFIG_BW_AUTO            ((double)-2)
-#define UCS_CONFIG_BW_IS_AUTO(_value) ((ssize_t)(_value) == UCS_CONFIG_BW_AUTO)
+#define UCS_CONFIG_DBL_AUTO            ((double)-2)
+#define UCS_CONFIG_DBL_IS_AUTO(_value) ((ssize_t)(_value) == \
+                                        UCS_CONFIG_DBL_AUTO)
 
 
 /**
@@ -376,28 +428,36 @@ ucs_config_parser_set_default_values(void *opts, ucs_config_field_t *fields);
 
 /**
  * Parse INI configuration file with UCX options.
- * 
- * @param path     Path file at this path.
- * @param override Whether to override, if another file was previously parsed
+ *
+ * @param dir_path  Parse file at this location.
+ * @param file_name Parse this file.
+ * @param override  Whether to override, if another file was previously parsed
  */
-ucs_status_t ucs_config_parse_config_file(const char *path, int override);
+void ucs_config_parse_config_file(const char *dir_path, const char *file_name,
+                                  int override);
+
+
+/**
+ * Parse configuration files. This function searches for config in several
+ * locations and parses them in order of precedence.
+ */
+void ucs_config_parse_config_files();
 
 
 /**
  * Fill existing opts structure.
  *
  * @param opts           User-defined options structure to fill.
- * @param fields         Array of fields which define how to parse.
+ * @param entry          Global configuration list entry which contains
+ *                       relevant fields (eg. parser info, prefix etc).
  * @param env_prefix     Prefix to add to all environment variables,
- *                       env_prefix may consist of multiple sub preifxes
- * @param table_prefix   Optional prefix to add to the variables of top-level table.
+ *                       env_prefix may consist of multiple sub prefixes
  * @param ignore_errors  Whether to ignore parsing errors and continue parsing
  *                       other fields.
  */
-ucs_status_t ucs_config_parser_fill_opts(void *opts, ucs_config_field_t *fields,
-                                         const char *env_prefix,
-                                         const char *table_prefix,
-                                         int ignore_errors);
+ucs_status_t
+ucs_config_parser_fill_opts(void *opts, ucs_config_global_list_entry_t *entry,
+                            const char *env_prefix, int ignore_errors);
 
 /**
  * Perform deep copy of the options structure.
@@ -472,7 +532,7 @@ ucs_status_t ucs_config_parser_set_value(void *opts, ucs_config_field_t *fields,
  * that ensures that this is called once
  *
  * @param env_prefix     Environment variable prefix.
- *                       env_prefix may consist of multiple sub prefixex
+ *                       env_prefix may consist of multiple sub prefixes
  */
 
 void ucs_config_parser_print_env_vars_once(const char *env_prefix);
@@ -493,7 +553,7 @@ size_t ucs_config_memunits_get(size_t config_size, size_t auto_size,
  * @param config_names     lookup array of counters patterns.
  * @param str              string to search.
  */
-int ucs_config_names_search(ucs_config_names_array_t config_names,
+int ucs_config_names_search(const ucs_config_names_array_t *config_names,
                             const char *str);
 
 END_C_DECLS

@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2019.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -95,4 +95,9 @@ int ucs_empty_function_do_assert()
 {
     ucs_assert_always(0);
     return 0;
+}
+
+void ucs_empty_function_do_assert_void()
+{
+    ucs_assert_always(0);
 }

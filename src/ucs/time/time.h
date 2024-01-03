@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -31,9 +31,15 @@ typedef uint32_t             ucs_short_time_t;
 #define UCS_TIME_INFINITY  ULLONG_MAX
 #define UCS_TIME_AUTO      (UCS_TIME_INFINITY - 1)
 
-#define UCS_MSEC_PER_SEC   1000ull       /* Milli */
-#define UCS_USEC_PER_SEC   1000000ul     /* Micro */
-#define UCS_NSEC_PER_SEC   1000000000ul  /* Nano */
+
+/* Milli per sec */
+#define UCS_MSEC_PER_SEC   1000ull
+/* Micro per sec */
+#define UCS_USEC_PER_SEC   1000000ul
+/* Nano per sec */
+#define UCS_NSEC_PER_SEC   1000000000ul
+/* Nano per micro */
+#define UCS_NSEC_PER_USEC  (UCS_NSEC_PER_SEC / UCS_USEC_PER_SEC)
 
 
 double ucs_get_cpu_clocks_per_sec();

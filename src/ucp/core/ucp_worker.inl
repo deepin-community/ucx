@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -15,9 +15,16 @@
 #include <ucs/datastruct/ptr_map.inl>
 
 
+UCS_PTR_MAP_IMPL(ep, 1);
+
+
 KHASH_IMPL(ucp_worker_rkey_config, ucp_rkey_config_key_t,
            ucp_worker_cfg_index_t, 1, ucp_rkey_config_hash_func,
            ucp_rkey_config_is_equal);
+
+/* EP configurations storage */
+UCS_ARRAY_IMPL(ep_config_arr, unsigned, ucp_ep_config_t,
+               static UCS_F_ALWAYS_INLINE);
 
 /**
  * Resolve remote key configuration key to a remote key configuration index.
@@ -41,6 +48,24 @@ static UCS_F_ALWAYS_INLINE ucs_status_t ucp_worker_rkey_config_get(
     return ucp_worker_add_rkey_config(worker, key, lanes_distance, cfg_index_p);
 }
 
+static UCS_F_ALWAYS_INLINE khint_t
+ucp_worker_mpool_hash_func(ucp_worker_mpool_key_t mpool_key)
+{
+    return (khint_t)mpool_key.mem_type ^ (mpool_key.sys_dev << 8);
+}
+
+static UCS_F_ALWAYS_INLINE int
+ucp_worker_mpool_key_is_equal(ucp_worker_mpool_key_t mpool_key1,
+                              ucp_worker_mpool_key_t mpool_key2)
+{
+    return (mpool_key1.sys_dev == mpool_key2.sys_dev) &&
+           (mpool_key1.mem_type == mpool_key2.mem_type);
+}
+
+KHASH_IMPL(ucp_worker_mpool_hash, ucp_worker_mpool_key_t, ucs_mpool_t,
+           1, ucp_worker_mpool_hash_func, ucp_worker_mpool_key_is_equal);
+
+
 /**
  * @return Worker name
  */
@@ -61,8 +86,9 @@ ucp_worker_get_ep_by_id(ucp_worker_h worker, ucs_ptr_map_key_t id,
     void *ptr;
 
     ucs_assert(id != UCS_PTR_MAP_KEY_INVALID);
-    status = ucs_ptr_map_get(&worker->ptr_map, id, 0, &ptr);
+    status = UCS_PTR_MAP_GET(ep, &worker->ep_map, id, 0, &ptr);
     if (ucs_unlikely((status != UCS_OK) && (status != UCS_ERR_NO_PROGRESS))) {
+        *ep_p = NULL; /* To supress compiler warning */
         return status;
     }
 
@@ -75,7 +101,8 @@ ucp_worker_get_ep_by_id(ucp_worker_h worker, ucs_ptr_map_key_t id,
 static UCS_F_ALWAYS_INLINE int
 ucp_worker_keepalive_is_enabled(ucp_worker_h worker)
 {
-    return worker->context->config.ext.keepalive_interval != UCS_TIME_INFINITY;
+    return (worker->context->config.ext.keepalive_num_eps != 0) &&
+           (worker->context->config.ext.keepalive_interval != UCS_TIME_INFINITY);
 }
 
 /**
@@ -196,7 +223,9 @@ ucp_worker_common_address_pack_flags(ucp_worker_h worker)
 {
     unsigned pack_flags = 0;
 
-    if (worker->context->num_mem_type_detect_mds > 0) {
+    if ((worker->context->num_mem_type_detect_mds > 0) ||
+        /* TODO: This code breaks wire compatability - fix it */
+        worker->context->config.ext.proto_enable) {
         pack_flags |= UCP_ADDRESS_PACK_FLAG_SYS_DEVICE;
     }
 

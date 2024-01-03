@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2019. ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2019. ALL RIGHTS RESERVED.
 * Copyright (C) UT-Battelle, LLC. 2014. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
@@ -12,7 +12,8 @@ extern "C" {
 #include <ucs/time/time.h>
 }
 
-#define TEST_CONFIG_FILE TOP_SRCDIR "/test/gtest/ucs/ucx.conf"
+#define TEST_CONFIG_DIR  TOP_SRCDIR "/test/gtest/ucs"
+#define TEST_CONFIG_FILE "ucx_test.conf"
 
 typedef enum {
     COLOR_RED,
@@ -288,6 +289,10 @@ protected:
 
         car_opts(const car_opts& orig) : m_max(orig.m_max)
         {
+            /* reset 'm_opts' to suppress Coverity warning that fields are not
+             * initialized in the constructor */ 
+            memset(&m_opts, 0, sizeof(m_opts));
+
             m_value = new char[m_max];
             strncpy(m_value, orig.m_value, m_max);
 
@@ -326,15 +331,22 @@ protected:
 
         static car_opts_t parse(const char *env_prefix,
                                 const char *table_prefix) {
+            /* coverity[tainted_string_argument] */
+            ucs::scoped_setenv ucx_config_dir("UCX_CONFIG_DIR",
+                                              TEST_CONFIG_DIR);
             car_opts_t tmp;
-            ucs_status_t status = ucs_config_parse_config_file(TEST_CONFIG_FILE, 1);
-            ASSERT_UCS_OK(status);
+            ucs_status_t status;
 
-            status = ucs_config_parser_fill_opts(&tmp,
-                                                 car_opts_table,
-                                                 env_prefix,
-                                                 table_prefix,
-                                                 0);
+            ucs_config_parse_config_files();
+
+            static ucs_config_global_list_entry_t entry;
+            entry.table  = car_opts_table;
+            entry.name   = "cars";
+            entry.prefix = table_prefix;
+            entry.size   = sizeof(car_opts_t);
+            entry.flags  = 0;
+
+            status = ucs_config_parser_fill_opts(&tmp, &entry, env_prefix, 0);
             ASSERT_UCS_OK(status);
             return tmp;
         }
@@ -435,7 +447,7 @@ UCS_TEST_F(test_config, parse_default) {
     EXPECT_EQ(UCS_MBYTE * 128.0, opts->bw_mbits);
     EXPECT_EQ(UCS_GBYTE * 128.0, opts->bw_gbits);
     EXPECT_EQ(UCS_TBYTE * 128.0, opts->bw_tbits);
-    EXPECT_TRUE(UCS_CONFIG_BW_IS_AUTO(opts->bw_auto));
+    EXPECT_TRUE(UCS_CONFIG_DBL_IS_AUTO(opts->bw_auto));
 
     EXPECT_EQ(UCS_TBYTE * 128.0, opts->can_pci_bw.bw);
     EXPECT_EQ(std::string("mlx5_0"), opts->can_pci_bw.name);
@@ -552,7 +564,7 @@ UCS_TEST_F(test_config, unused) {
     /* set to warn about unused env vars */
     ucs_global_opts.warn_unused_env_vars = 1;
 
-    const std::string warn_str    = "unused env variable";
+    const std::string warn_str    = "unused environment variable";
     const std::string unused_var1 = "UCX_UNUSED_VAR1";
     /* coverity[tainted_string_argument] */
     ucs::scoped_setenv env1(unused_var1.c_str(), "unused");
@@ -683,4 +695,35 @@ UCS_TEST_F(test_config, test_config_file) {
 
     /* Overriding INI file by env vars */
     EXPECT_EQ(std::string("Ford"), std::string(opts->brand));
+}
+
+UCS_TEST_F(test_config, test_config_file_parse_files) {
+    /* coverity[tainted_string_argument] */
+    ucs::scoped_setenv ucx_config_dir("UCX_CONFIG_DIR", TEST_CONFIG_DIR);
+    
+    car_opts_t opts;
+    ucs_status_t status;
+
+    ucs_config_parse_config_file(TEST_CONFIG_DIR, TEST_CONFIG_FILE, 1);
+
+    ucs_config_global_list_entry_t entry;
+    entry.table  = car_opts_table;
+    entry.name   = "cars";
+    entry.prefix = NULL;
+    entry.size   = sizeof(car_opts_t);
+    entry.flags  = 0;
+
+    status = ucs_config_parser_fill_opts(&opts, &entry, UCS_DEFAULT_ENV_PREFIX,
+                                         0);
+    EXPECT_EQ(200, opts.price);
+    ucs_config_parser_release_opts(&opts, car_opts_table);
+    
+    ucs_config_parse_config_files();
+    status = ucs_config_parser_fill_opts(&opts, &entry, UCS_DEFAULT_ENV_PREFIX,
+                                         0);
+    ASSERT_UCS_OK(status);
+
+    /* Verify ucs_config_parse_config_files() overrides config */
+    EXPECT_EQ(100, opts.price);
+    ucs_config_parser_release_opts(&opts, car_opts_table);
 }

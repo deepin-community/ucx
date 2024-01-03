@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2015.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2015. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -13,7 +13,7 @@
 #include <ucs/arch/bitops.h>
 #include <ucs/debug/assert.h>
 #include <ucs/debug/log.h>
-#include <ucs/debug/memtrack.h>
+#include <ucs/debug/memtrack_int.h>
 #include <ucs/sys/math.h>
 #include <string.h>
 
@@ -614,6 +614,11 @@ void ucs_pgtable_purge(ucs_pgtable_t *pgtable, ucs_pgt_search_callback_t cb,
     ucs_status_t status;
     unsigned i;
 
+    if (num_regions == 0) {
+        ucs_debug("purge empty page table");
+        goto out;
+    }
+
     all_regions = ucs_calloc(num_regions, sizeof(*all_regions),
                              "pgt_purge_regions");
     if (all_regions == NULL) {
@@ -642,6 +647,7 @@ void ucs_pgtable_purge(ucs_pgtable_t *pgtable, ucs_pgt_search_callback_t cb,
 
     ucs_free(all_regions);
 
+out:
     /* Page table should be totally empty */
     ucs_assert(!ucs_pgt_entry_present(&pgtable->root));
     ucs_assertv(pgtable->shift       == UCS_PGT_ADDR_SHIFT, "shift=%u", pgtable->shift);

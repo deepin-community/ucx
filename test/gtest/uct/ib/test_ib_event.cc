@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2020.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2020. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
@@ -12,10 +12,9 @@
 
 extern "C" {
 #include <uct/ib/base/ib_device.h>
-#if HAVE_MLX5_HW
+#if HAVE_MLX5_DV
 #include <uct/ib/mlx5/ib_mlx5.h>
 #include <uct/ib/rc/accel/rc_mlx5.h>
-#include <uct/ib/mlx5/exp/ib_exp.h>
 #endif
 #include <uct/ib/rc/verbs/rc_verbs.h>
 }
@@ -57,13 +56,21 @@ public:
     struct event_ctx {
         uct_ib_async_event_wait_t super;
         volatile bool             got;
+        uct_ib_device_t           *dev;
     };
 
     static unsigned last_wqe_check_cb(void *arg) {
         event_ctx *event = (event_ctx *)arg;
-        event->got       = true;
-        ucs_callbackq_remove_safe(event->super.cbq, event->super.cb_id);
+        int cb_id;
+
+        ucs_spin_lock(&event->dev->async_event_lock);
+        cb_id              = event->super.cb_id;
         event->super.cb_id = UCS_CALLBACKQ_ID_NULL;
+        ucs_spin_unlock(&event->dev->async_event_lock);
+
+        EXPECT_FALSE(event->got);
+        event->got = true;
+        ucs_callbackq_remove_safe(event->super.cbq, cb_id);
         return 1;
     }
 
@@ -73,7 +80,7 @@ public:
         return &ucs_derived_of(e.md(), uct_ib_md_t)->dev;
     }
 
-    bool wait_for_last_wqe_event(entity &e, bool before, bool progress = true) {
+    bool wait_for_last_wqe_event(entity &e, bool before) {
         uint32_t qp_num = m_qp->qp_num();
         ucs_time_t deadline;
         ucs_status_t status;
@@ -81,6 +88,7 @@ public:
         m_event.got       = false;
         m_event.super.cb  = last_wqe_check_cb;
         m_event.super.cbq = &e.worker()->progress_q;
+        m_event.dev       = dev(e);
 
         if (before) {
             /* move QP to error state before scheduling event callback */
@@ -91,22 +99,15 @@ public:
         /* schedule event callback */
         status = uct_ib_device_async_event_wait(dev(e),
                 IBV_EVENT_QP_LAST_WQE_REACHED, qp_num, &m_event.super);
-        ASSERT_UCS_OK_OR_INPROGRESS(status);
-        if (status == UCS_OK) {
-            /* event already arrived */
-            return true;
-        }
+        ASSERT_UCS_OK(status);
+
+        /* event should not be called directly, but only from progress */
+        usleep(1000);
+        EXPECT_FALSE(m_event.got);
 
         if (!before) {
             /* move QP to error state after scheduling event callback */
             m_qp->to_err();
-        }
-
-        if (!progress) {
-            /* wait for last_wqe event arrival */
-            usleep(500);
-            /* without progress callback wan't be called */
-            return !m_event.got;
         }
 
         /* wait for callback */
@@ -128,7 +129,7 @@ class uct_ep_test_event : public uct_test_event_base {
 protected:
     void init_qp(entity &e) {
         if (GetParam()->tl_name == "rc_mlx5") {
-#if HAVE_MLX5_HW
+#if HAVE_MLX5_DV
             m_qp.reset(new mlx5_qp(e));
 #else
             ucs_fatal("no mlx5 compile time support");
@@ -139,7 +140,7 @@ protected:
     }
 
 private:
-#if HAVE_MLX5_HW
+#if HAVE_MLX5_DV
     class mlx5_qp : public qp {
     public:
         mlx5_qp(entity &e) : qp(e) {}
@@ -150,11 +151,10 @@ private:
         }
 
         void to_err() {
-            uct_ib_mlx5_md_t *md = (uct_ib_mlx5_md_t *)m_e.md();
-            uct_rc_mlx5_ep_t *ep = (uct_rc_mlx5_ep_t *)m_e.ep(0);
-            uct_ib_mlx5_qp_t *qp = &ep->tx.wq.super;
+            uct_ib_iface_t   *iface = (uct_ib_iface_t *)m_e.iface();
+            uct_rc_mlx5_ep_t *ep    = (uct_rc_mlx5_ep_t *)m_e.ep(0);
 
-            uct_ib_mlx5_modify_qp_state(md, qp, IBV_QPS_ERR);
+            uct_ib_mlx5_modify_qp_state(iface, &ep->tx.wq.super, IBV_QPS_ERR);
         }
     };
 #endif
@@ -288,7 +288,7 @@ public:
 
     void init_qp(entity &e) {
         if (GetParam()->tl_name == "rc_mlx5") {
-#if HAVE_MLX5_HW
+#if HAVE_MLX5_DV
             m_qp.reset(new mlx5_qp(e));
 #else
             ucs_fatal("no mlx5 compile time support");
@@ -308,7 +308,7 @@ public:
         m_e.reset(create_entity(0));
     }
 
-    bool wait_for_last_wqe_event(bool before, bool progress = true) {
+    bool wait_for_last_wqe_event(bool before) {
         ucs_status_t status;
         bool ret;
 
@@ -318,8 +318,7 @@ public:
                 IBV_EVENT_QP_LAST_WQE_REACHED, m_qp->qp_num());
         ASSERT_UCS_OK(status);
 
-        ret = uct_test_event_base::wait_for_last_wqe_event(*m_e, before,
-                                                           progress);
+        ret = uct_test_event_base::wait_for_last_wqe_event(*m_e, before);
 
         uct_ib_device_async_event_unregister(dev(*m_e),
                 IBV_EVENT_QP_LAST_WQE_REACHED, m_qp->qp_num());
@@ -332,7 +331,7 @@ protected:
     ucs::auto_ptr<entity> m_e;
 
 private:
-#if HAVE_MLX5_HW
+#if HAVE_MLX5_DV
     class mlx5_qp : public qp {
     public:
         mlx5_qp(entity &e) : qp(e), m_txwq(), m_iface(), m_md() {
@@ -344,7 +343,6 @@ private:
             uct_rc_mlx5_iface_fill_attr(m_iface, &attr,
                                         m_iface->super.config.tx_qp_len,
                                         &m_iface->rx.srq);
-            uct_ib_exp_qp_fill_attr(&m_iface->super.super, &attr.super);
             status = uct_rc_mlx5_iface_create_qp(m_iface, &m_txwq.super,
                                                  &m_txwq, &attr);
             ASSERT_UCS_OK(status);
@@ -371,7 +369,8 @@ private:
         }
 
         void to_err() {
-            uct_ib_mlx5_modify_qp_state(m_md, &m_txwq.super, IBV_QPS_ERR);
+            uct_ib_mlx5_modify_qp_state(&m_iface->super.super, &m_txwq.super,
+                                        IBV_QPS_ERR);
         }
 
     private:
@@ -429,11 +428,6 @@ UCS_TEST_P(uct_qp_test_event, last_wqe_cb_after_subscribe)
 UCS_TEST_P(uct_qp_test_event, last_wqe_cb_before_subscribe)
 {
     ASSERT_TRUE(wait_for_last_wqe_event(true));
-}
-
-UCS_TEST_P(uct_qp_test_event, last_wqe_cb_no_progress)
-{
-    ASSERT_TRUE(wait_for_last_wqe_event(false, false));
 }
 
 UCT_INSTANTIATE_RC_TEST_CASE(uct_qp_test_event);

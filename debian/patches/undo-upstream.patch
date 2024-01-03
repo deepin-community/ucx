@@ -1,14 +1,6 @@
 --- a/configure.ac
 +++ b/configure.ac
-@@ -353,17 +353,12 @@
-                  ])
- AS_IF([test "x$with_docs_only" = xyes], [], [
- AC_CONFIG_LINKS([
--                 debian/compat:debian/compat
-                  debian/copyright:debian/copyright
--                 debian/ucx.prerm:debian/ucx.prerm
-                  ])
- AC_CONFIG_FILES([
+@@ -350,9 +350,6 @@
                   ucx.spec
                   ucx.pc
                   contrib/rpmdef.sh
