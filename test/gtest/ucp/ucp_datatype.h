@@ -1,12 +1,12 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2018.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2018. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
 #ifndef TEST_UCP_DATATYPE_H_
 #define TEST_UCP_DATATYPE_H_
 
-#include <common/gtest.h>
+#include <common/googletest/gtest.h>
 
 #include <ucp/api/ucp.h>
 extern "C" {
@@ -46,6 +46,9 @@ public:
     };
 
     data_type_desc_t &make(ucp_datatype_t datatype, const void *buf,
+                           size_t length, size_t iov_count);
+
+    data_type_desc_t &make(ucp_datatype_t datatype, const void *buf,
                            size_t length) {
         return make(datatype, buf, length, m_iov_cnt_limit);
     };
@@ -82,10 +85,19 @@ public:
         return m_count;
     };
 
-private:
-    data_type_desc_t &make(ucp_datatype_t datatype, const void *buf,
-                           size_t length, size_t iov_count);
+    ssize_t extent() const
+    {
+        if (UCP_DT_IS_CONTIG(m_dt) || UCP_DT_IS_GENERIC(m_dt)) {
+            return m_length;
+        } else if (UCP_DT_IS_IOV(m_dt)) {
+            return m_count;
+        }
 
+        ADD_FAILURE() << "Not supported datatype";
+        return -1;
+    }
+
+private:
     uintptr_t       m_origin;
     size_t          m_length;
 

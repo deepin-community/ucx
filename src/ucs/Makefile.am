@@ -1,22 +1,23 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 # Copyright (C) UT-Battelle, LLC. 2014-2017. ALL RIGHTS RESERVED.
 # Copyright (C) ARM Ltd. 2016-2017.  ALL RIGHTS RESERVED.
 # See file LICENSE for terms.
 #
 
-SUBDIRS = vfs/sock . vfs/fuse
+SUBDIRS = vfs/sock . vfs/fuse signal
 
 AUTOMAKE_OPTIONS    = nostdinc # avoid collision with built-in debug.h
 lib_LTLIBRARIES     = libucs.la
 bin_PROGRAMS        =
 
-libucs_la_CPPFLAGS = $(BASE_CPPFLAGS) -DUCX_MODULE_DIR=\"$(moduledir)\" \
-                     -DUCX_CONF_DIR=\"$(ucx_conf_dir)\"
-libucs_la_CFLAGS   = $(BASE_CFLAGS)
-libucs_la_LDFLAGS  = -ldl $(NUMA_LIBS) -version-info $(SOVERSION)
+libucs_la_CPPFLAGS = $(BASE_CPPFLAGS) $(BFD_CPPFLAGS) \
+                     -DUCX_MODULE_DIR=\"$(moduledir)\" \
+                     -DUCX_CONFIG_DIR=\"$(ucx_config_dir)\"
+libucs_la_CFLAGS   = $(BASE_CFLAGS) $(BFD_CFLAGS)
+libucs_la_LDFLAGS  = -ldl $(BFD_LDFLAGS) -version-info $(SOVERSION)
 libucs_ladir       = $(includedir)/ucs
-libucs_la_LIBADD   = $(LIBM) $(top_builddir)/src/ucm/libucm.la
+libucs_la_LIBADD   = $(LIBM) $(top_builddir)/src/ucm/libucm.la $(BFD_LIBS)
 
 nobase_dist_libucs_la_HEADERS = \
 	arch/aarch64/bitops.h \
@@ -25,6 +26,7 @@ nobase_dist_libucs_la_HEADERS = \
 	arch/bitops.h \
 	algorithm/crc.h \
 	algorithm/qsort_r.h \
+	algorithm/string_distance.h \
 	async/async_fwd.h \
 	config/global_opts.h \
 	config/ini.h \
@@ -38,6 +40,7 @@ nobase_dist_libucs_la_HEADERS = \
 	datastruct/linear_func.h \
 	datastruct/list.h \
 	datastruct/mpool.h \
+	datastruct/mpool_set.h \
 	datastruct/pgtable.h \
 	datastruct/queue_types.h \
 	datastruct/strided_alloc.h \
@@ -45,6 +48,7 @@ nobase_dist_libucs_la_HEADERS = \
 	datastruct/string_set.h \
 	debug/log_def.h \
 	debug/debug.h \
+	debug/memtrack.h \
 	memory/rcache.h \
 	memory/memory_type.h \
 	memory/memtype_cache.h \
@@ -59,7 +63,7 @@ nobase_dist_libucs_la_HEADERS = \
 	sys/preprocessor.h \
 	sys/string.h \
 	sys/sock.h \
-	sys/topo.h \
+	sys/topo/base/topo.h \
 	sys/stubs.h \
 	sys/uid.h \
 	time/time_def.h \
@@ -71,6 +75,7 @@ nobase_dist_libucs_la_HEADERS = \
 	type/thread_mode.h \
 	type/cpu_set.h \
 	vfs/base/vfs_obj.h \
+	vfs/base/vfs_cb.h \
 	arch/atomic.h \
 	arch/x86_64/global_opts.h \
 	arch/x86_64/atomic.h \
@@ -85,11 +90,13 @@ noinst_HEADERS = \
 	arch/ppc64/cpu.h \
 	arch/x86_64/cpu.h \
 	arch/cpu.h \
+	config/ucm_opts.h \
 	datastruct/arbiter.h \
 	datastruct/bitmap.h \
 	datastruct/frag_list.h \
 	datastruct/mpmc.h \
 	datastruct/mpool.inl \
+	datastruct/mpool_set.inl \
 	datastruct/ptr_array.h \
 	datastruct/queue.h \
 	datastruct/sglib.h \
@@ -100,13 +107,15 @@ noinst_HEADERS = \
 	debug/assert.h \
 	debug/debug_int.h \
 	debug/log.h \
-	debug/memtrack.h \
+	debug/memtrack_int.h \
 	memory/numa.h \
 	memory/rcache_int.h \
+	memory/rcache.inl \
 	profile/profile.h \
 	stats/stats.h \
 	sys/checker.h \
 	sys/compiler.h \
+	sys/lib.h \
 	sys/module.h \
 	sys/sys.h \
 	sys/iovec.h \
@@ -118,6 +127,7 @@ noinst_HEADERS = \
 	type/float8.h \
 	async/async.h \
 	async/pipe.h \
+	async/eventfd.h \
 	async/signal.h \
 	async/thread.h \
 	async/async_int.h
@@ -125,6 +135,7 @@ noinst_HEADERS = \
 libucs_la_SOURCES = \
 	algorithm/crc.c \
 	algorithm/qsort_r.c \
+	algorithm/string_distance.c \
 	arch/aarch64/cpu.c \
 	arch/aarch64/global_opts.c \
 	arch/ppc64/timebase.c \
@@ -135,6 +146,7 @@ libucs_la_SOURCES = \
 	async/async.c \
 	async/signal.c \
 	async/pipe.c \
+	async/eventfd.c \
 	async/thread.c \
 	config/global_opts.c \
 	config/ucm_opts.c \
@@ -146,8 +158,10 @@ libucs_la_SOURCES = \
 	datastruct/frag_list.c \
 	datastruct/mpmc.c \
 	datastruct/mpool.c \
+	datastruct/mpool_set.c \
 	datastruct/pgtable.c \
 	datastruct/ptr_array.c \
+	datastruct/ptr_map.c \
 	datastruct/strided_alloc.c \
 	datastruct/string_buffer.c \
 	datastruct/string_set.c \
@@ -160,6 +174,7 @@ libucs_la_SOURCES = \
 	memory/memtype_cache.c \
 	memory/numa.c \
 	memory/rcache.c \
+	memory/rcache_vfs.c \
 	profile/profile.c \
 	stats/stats.c \
 	sys/event_set.c \
@@ -169,8 +184,9 @@ libucs_la_SOURCES = \
 	sys/string.c \
 	sys/sys.c \
 	sys/iovec.c \
+	sys/lib.c \
 	sys/sock.c \
-	sys/topo.c \
+	sys/topo/base/topo.c \
 	sys/stubs.c \
 	sys/uid.c \
 	time/time.c \
@@ -180,7 +196,8 @@ libucs_la_SOURCES = \
 	type/status.c \
 	type/spinlock.c \
 	type/thread_mode.c \
-	vfs/base/vfs_obj.c
+	vfs/base/vfs_obj.c \
+	vfs/base/vfs_cb.c
 
 if HAVE_AARCH64_THUNDERX2
 libucs_la_SOURCES += \
@@ -203,6 +220,10 @@ all-local: $(objdir)/$(modulesubdir)
 
 $(objdir)/$(modulesubdir): $(lib_LTLIBRARIES)
 	$(AM_V_at)$(LN_RS) -fn $(localmoduledir) $(objdir)/$(modulesubdir)
+
+PKG_CONFIG_NAME=ucs
+
+include $(top_srcdir)/config/module-pkg-config.am
 
 #TODO	stats/stats_dump.c
 #TODO	stats/stats_reader.c

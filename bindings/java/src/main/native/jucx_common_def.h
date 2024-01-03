@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Mellanox Technologies Ltd. 2019. ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 #ifndef HELPER_H_
@@ -7,7 +7,7 @@
 
 #include <ucp/api/ucp.h>
 #include <ucs/debug/log.h>
-#include <ucs/debug/memtrack.h>
+#include <ucs/debug/memtrack_int.h>
 #include <ucs/profile/profile.h>
 #include <ucs/type/spinlock.h>
 
@@ -58,6 +58,11 @@ typedef uintptr_t native_ptr;
 bool j2cInetSockAddr(JNIEnv *env, jobject sock_addr, sockaddr_storage& ss, socklen_t& sa_len);
 
 /**
+ * @brief Utility to convert c sockaddr to java InetSocketAddress
+ */
+jobject c2jInetSockAddr(JNIEnv *env, const sockaddr_storage* ss);
+
+/**
  * @brief Get the jni env object. To be able to call java methods from ucx async callbacks.
  */
 JNIEnv* get_jni_env();
@@ -89,7 +94,7 @@ ucs_status_t am_recv_callback(void *arg, const void *header, size_t header_lengt
  * @brief Utility to allocate jucx request and set appropriate java callback in it.
  */
 jobject jucx_request_allocate(JNIEnv *env, jobject callback, ucp_request_param_t *param,
-                              jint memory_type);
+                              jobject request_params);
 
 /**
  * @ingroup JUCX_REQ
@@ -118,7 +123,7 @@ void jucx_request_update_sender_tag(JNIEnv *env, jobject jucx_request, ucp_tag_t
 /**
  * @brief Function to handle result of ucx function submition, to handle immidiate completion.
  */
-void process_request(JNIEnv *env, jobject request, ucs_status_ptr_t status);
+void process_request(JNIEnv *env, const ucp_request_param_t *request_params, ucs_status_ptr_t status);
 
 void jucx_connection_handler(ucp_conn_request_h conn_request, void *arg);
 

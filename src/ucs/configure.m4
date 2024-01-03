@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 # Copyright (C) UT-Battelle, LLC. 2015. ALL RIGHTS RESERVED.
 # Copyright (C) ARM, Ltd. 2016. ALL RIGHTS RESERVED.
 # See file LICENSE for terms.
@@ -28,58 +28,122 @@ AS_IF([test "x$enable_profiling" = xyes],
 AM_CONDITIONAL([HAVE_PROFILING],[test "x$HAVE_PROFILING" = "xyes"])
 
 
+AC_DEFUN([CHECK_BFD_LIB],
+[
+   AS_IF([test "x$bfd_happy" = "xno"], [
+       unset ac_cv_lib_bfd_bfd_openr
+       LIBS="$LIBS $1"
+       BFD_CHECK_DEPLIBS="$BFD_CHECK_DEPLIBS $1"
+       BFD_CHECK_LIBS="$BFD_CHECK_LIBS $1"
+       AC_CHECK_LIB(bfd, bfd_openr,
+           [
+            bfd_happy="yes"
+           ],
+           [],
+           [$BFD_CHECK_DEPLIBS])
+   ])
+])
+
 #
 # Detailed backtrace with debug information.
 # This option requires binutils-devel package.
 #
-AC_ARG_ENABLE([backtrace-detail],
-	AS_HELP_STRING([--disable-backtrace-detail], [Disable detailed backtrace support, default: NO]),
-	[],
-	[enable_backtrace_detail=yes])
-	
-AS_IF([test "x$enable_backtrace_detail" = xyes],
-	[
-	BT=1
-	AC_CHECK_HEADER([bfd.h], [], [AC_MSG_WARN([binutils headers not found])]; BT=0)
-	AC_CHECK_LIB(bfd, bfd_openr,  LIBS="$LIBS -lbfd", [AC_MSG_WARN([bfd library not found])];BT=0)
-	AC_CHECK_LIB(dl, dlopen, LIBS="$LIBS -ldl", [AC_MSG_WARN([dl library not found])];BT=0)
-	AC_CHECK_LIB(intl, main, LIBS="$LIBS -lintl", [AC_MSG_WARN([intl library not found])])
-	AC_CHECK_TYPES([struct dl_phdr_info], [], [AC_MSG_WARN([struct dl_phdr_info not defined])];BT=0,
-					[#define _GNU_SOURCE 1
-					 #include <link.h>]) 
-	AC_CHECK_DECLS([bfd_get_section_flags, bfd_section_flags, bfd_get_section_vma, bfd_section_vma],
-		       [], [], [#include <bfd.h>])
+AC_ARG_WITH([bfd],
+            [AS_HELP_STRING([--with-bfd=(DIR)],
+            [Enable using BFD support for detailed backtrace (default is guess).])],
+            [], [with_bfd=guess])
+AS_IF([test "x$with_bfd" != xno],
+      [
+       # Do not define BFD_CFLAGS, BFD_LIBS, etc to make sure automake will not
+       # try to use them when bfd_happy=no
+       BFD_CHECK_CFLAGS=""
+       BFD_CHECK_LIBS="-lbfd -ldl -lz"
+       AS_IF([test "x$with_bfd" = "xguess" -o "x$with_bfd" = "xyes"],
+             [BFD_CHECK_CPPFLAGS=""
+              BFD_CHECK_LDFLAGS=""],
+             [BFD_CHECK_CPPFLAGS="-I${with_bfd}/include"
+              BFD_CHECK_LDFLAGS="-L${with_bfd}/lib -L${with_bfd}/lib64"])
 
-	AC_MSG_CHECKING([bfd_section_size API version])
-	AC_LANG_PUSH([C])
-	SAVE_CFLAGS="$CFLAGS"
-	AC_COMPILE_IFELSE([AC_LANG_SOURCE([[
-		#include <bfd.h>
-		int main(int argc, char** argv) {
-			asection *sec = malloc(sizeof(*sec));
-			bfd_section_size(sec);
-			free(sec);
-			return 0;
-		} ]])],
-		[AC_MSG_RESULT([1-arg API])
-		 AC_DEFINE([HAVE_1_ARG_BFD_SECTION_SIZE], [1],
-			   [bfd_section_size 1-arg version])],
-		[AC_MSG_RESULT([2-args API])
-		 AC_DEFINE([HAVE_1_ARG_BFD_SECTION_SIZE], [0],
-			   [bfd_section_size 2-args version])])
-	CFLAGS="$SAVE_CFLAGS"
-	AC_LANG_POP([C])
+       save_CFLAGS="$CFLAGS"
+       save_CPPFLAGS="$CPPFLAGS"
+       save_LDFLAGS="$LDFLAGS"
+       save_LIBS="$LIBS"
 
-	if test "x$BT" = "x1"; then
-		AC_CHECK_FUNCS([cplus_demangle])
-		AC_DEFINE([HAVE_DETAILED_BACKTRACE], 1, [Enable detailed backtrace])
-        case ${host} in
-            aarch64*) CFLAGS="$CFLAGS -funwind-tables" ;;
-        esac
-	else
-		AC_MSG_WARN([detailed backtrace is not supported])
-	fi
-	]
+       # Check BFD properties with all flags pointing to the custom location
+       CPPFLAGS="$CPPFLAGS $BFD_CHECK_CPPFLAGS"
+       LIBS="$LIBS $BFD_CHECK_LIBS"
+       BFD_CHECK_DEPLIBS="-lz -ldl"
+
+       # Link the test applications as a shared library, to fail if libbfd is
+       # not a PIC object.
+       # Do not allow undefined symbols, to ensure all references are resolved.
+       # TODO Allow static link with static libbfd
+       CFLAGS="$CFLAGS $BFD_CHECK_CFLAGS -fPIC"
+       LDFLAGS="$LDFLAGS $BFD_CHECK_LDFLAGS -shared -Wl,--no-undefined"
+
+       bfd_happy="no"
+       CHECK_BFD_LIB([""])
+       CHECK_BFD_LIB([-liberty])
+       CHECK_BFD_LIB([-lsframe])
+
+       AC_CHECK_HEADER([bfd.h], [], [bfd_happy="no"])
+       AC_CHECK_TYPES([struct dl_phdr_info], [], [bfd_happy=no],
+                      [[#define _GNU_SOURCE 1
+                        #include <link.h>]])
+
+       AS_IF([test "x$bfd_happy" = "xyes"],
+             [
+              # Check optional BFD functions
+              AC_CHECK_DECLS([bfd_get_section_flags, bfd_section_flags,
+                              bfd_get_section_vma, bfd_section_vma],
+                             [], [], [#include <bfd.h>])
+
+              # Check bfd_section_size() function type
+              AC_MSG_CHECKING([bfd_section_size API version])
+              AC_LANG_PUSH([C])
+              AC_COMPILE_IFELSE([
+                  AC_LANG_SOURCE([[
+                      #include <bfd.h>
+                      int main(int argc, char** argv) {
+                          asection sec;
+                          bfd_section_size(&sec);
+                          return 0;
+                      }
+                  ]])],
+                  [AC_MSG_RESULT([1-arg API])
+                   AC_DEFINE([HAVE_1_ARG_BFD_SECTION_SIZE], [1], [bfd_section_size 1-arg])],
+                  [AC_MSG_RESULT([2-args API])
+                   AC_DEFINE([HAVE_1_ARG_BFD_SECTION_SIZE], [0], [bfd_section_size 2-args])
+              ])
+              AC_LANG_POP([C])
+
+              # Check if demange is supported
+              AC_CHECK_FUNCS([cplus_demangle])
+
+              case ${host} in
+                  aarch64*) BFD_CHECK_CFLAGS="$BFD_CHECK_CFLAGS -funwind-tables" ;;
+              esac
+
+              # Define macros and variable substitutions for BFD support
+              AC_DEFINE([HAVE_DETAILED_BACKTRACE], 1, [Enable detailed backtrace])
+              AC_SUBST([BFD_CFLAGS], [$BFD_CHECK_CFLAGS])
+              AC_SUBST([BFD_CPPFLAGS], [$BFD_CHECK_CPPFLAGS])
+              AC_SUBST([BFD_LIBS], [$BFD_CHECK_LIBS])
+              AC_SUBST([BFD_LDFLAGS], [$BFD_CHECK_LDFLAGS])
+              AC_SUBST([BFD_DEPS], [$BFD_CHECK_DEPLIBS])
+             ],
+             [
+               AS_IF([test "x$with_bfd" != "xyes" -a "x$with_bfd" != "xguess"],
+                     [AC_MSG_ERROR([BFD support requested but could not be found])])
+             ])
+
+       LIBS="$save_LIBS"
+       LDFLAGS="$save_LDFLAGS"
+       CPPFLAGS="$save_CPPFLAGS"
+       CFLAGS="$save_CFLAGS"
+      ],
+      [bfd_happy="no"
+       AC_MSG_WARN([BFD support was explicitly disabled])]
 )
 
 
@@ -87,11 +151,11 @@ AS_IF([test "x$enable_backtrace_detail" = xyes],
 # Enable statistics and counters
 #
 AC_ARG_ENABLE([stats],
-	AS_HELP_STRING([--enable-stats], 
+	AS_HELP_STRING([--enable-stats],
 	               [Enable statistics, useful for profiling, default: NO]),
 	[],
 	[enable_stats=no])
-	
+
 AS_IF([test "x$enable_stats" = xyes],
 	  [AS_MESSAGE([enabling statistics])
 	   AC_DEFINE([ENABLE_STATS], [1], [Enable statistics])
@@ -105,11 +169,11 @@ AM_CONDITIONAL([HAVE_STATS],[test "x$HAVE_STATS" = "xyes"])
 # Enable tuning params at runtime
 #
 AC_ARG_ENABLE([tuning],
-	AS_HELP_STRING([--enable-tuning], 
+	AS_HELP_STRING([--enable-tuning],
 	               [Enable parameter tuning in run-time, default: NO]),
 	[],
 	[enable_tuning=no])
-	
+
 AS_IF([test "x$enable_tuning" = xyes],
 	  [AS_MESSAGE([enabling tuning])
 	   AC_DEFINE([ENABLE_TUNING], [1], [Enable tuning])
@@ -117,24 +181,6 @@ AS_IF([test "x$enable_tuning" = xyes],
 	  [:]
   )
 AM_CONDITIONAL([HAVE_TUNING],[test "x$HAVE_TUNING" = "xyes"])
-
-
-#
-# Enable memory tracking
-#
-AC_ARG_ENABLE([memtrack],
-	AS_HELP_STRING([--enable-memtrack], 
-	               [Enable memory tracking, useful for profiling, default: NO]),
-	[],
-	[enable_memtrack=no])
-	
-AS_IF([test "x$enable_memtrack" = xyes],
-	  [AS_MESSAGE([enabling memory tracking])
-	   AC_DEFINE([ENABLE_MEMTRACK], [1], [Enable memory tracking])
-	   HAVE_MEMTRACK=yes],
-	  [:]
-  )
-AM_CONDITIONAL([HAVE_MEMTRACK],[test "x$HAVE_MEMTRACK" = "xyes"])
 
 
 #
@@ -163,7 +209,7 @@ AS_CASE([$enable_logging],
 # Disable assertions
 #
 AC_ARG_ENABLE([assertions],
-	AS_HELP_STRING([--disable-assertions], 
+	AS_HELP_STRING([--disable-assertions],
 	               [Disable code assertions, default: NO])
 	)
 
@@ -189,7 +235,7 @@ CHECK_CROSS_COMP([AC_LANG_SOURCE([static int rc = 1;
 # Manual configuration of cacheline size
 #
 AC_ARG_WITH([cache-line-size],
-        [AC_HELP_STRING([--with-cache-line-size=SIZE],
+        [AS_HELP_STRING([--with-cache-line-size=SIZE],
             [Build UCX with cache line size defined by user. This parameter
              overwrites default cache line sizes defines in
              UCX (x86-64: 64, Power: 128, ARMv8: 64/128). The supported values are: 64, 128])],
@@ -257,4 +303,6 @@ AC_CHECK_FUNCS([__clear_cache], [], [])
 AC_CHECK_FUNCS([__aarch64_sync_cache_range], [], [])
 
 
-AC_CONFIG_FILES([src/ucs/Makefile])
+AC_CONFIG_FILES([src/ucs/Makefile
+                 src/ucs/signal/Makefile
+                 src/ucs/ucx-ucs.pc])

@@ -1,3 +1,141 @@
+ucx (1.15.0-1) unstable; urgency=medium
+
+  * New upstream release
+  * README.md now called README.md
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Tue, 03 Oct 2023 08:46:09 +0100
+
+ucx (1.15.0~rc6-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Thu, 21 Sep 2023 08:32:04 +0100
+
+ucx (1.15.0~rc5-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Wed, 13 Sep 2023 08:51:10 +0100
+
+ucx (1.15.0~rc4-1) unstable; urgency=medium
+
+  * New upstream release
+  * README now called README.md. Closes: #995457
+  * Fix build-twice errors. Close: #1045573
+  * Disable go support this build; 
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Tue, 05 Sep 2023 08:38:30 +0100
+
+ucx (1.15.0~rc3-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Wed, 09 Aug 2023 12:42:41 +0100
+
+ucx (1.15.0~rc2-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Mon, 31 Jul 2023 16:33:56 +0100
+
+ucx (1.15.0~rc1-2) unstable; urgency=medium
+
+  * Push to unstable
+  * disable java, maven doc for this build
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Sun, 11 Jun 2023 10:52:51 +0100
+
+ucx (1.15.0~rc1-1) experimental; urgency=medium
+
+  * New upstream release
+  * Re-enable java.
+  * Build-dep on maven, default-jdk
+  * Standards-Version: 4.6.2
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Mon, 15 May 2023 18:49:08 +0100
+
+ucx (1.14.0-1) experimental; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Sun, 15 Jan 2023 10:44:18 +0000
+
+ucx (1.13.100-1) experimental; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Tue, 03 Jan 2023 10:05:35 +0000
+
+ucx (1.13.1-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Mon, 12 Sep 2022 10:22:17 +0100
+
+ucx (1.13.1~rc1-1) experimental; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Thu, 25 Aug 2022 07:24:41 +0100
+
+ucx (1.13.0-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Mon, 18 Jul 2022 08:21:59 +0100
+
+ucx (1.13.0~rc2-1) unstable; urgency=medium
+
+  * New upstream release
+  * Patch ptr-fix.patch for missing def
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Sat, 02 Jul 2022 12:59:38 +0100
+
+ucx (1.13.0~rc1-1) unstable; urgency=medium
+
+  * New upstream release
+  * Ship ucx-*.pc files
+  * Standards-Version: 4.6.1
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Mon, 30 May 2022 11:24:44 +0100
+
+ucx (1.12.1-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Thu, 24 Mar 2022 09:32:16 +0000
+
+ucx (1.12.1~rc4-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Sat, 19 Mar 2022 17:29:07 +0000
+
+ucx (1.12.1~rc3-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Mon, 07 Mar 2022 10:47:04 +0000
+
+ucx (1.12.1~rc2-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Tue, 15 Feb 2022 09:37:30 +0000
+
+ucx (1.12.1~rc1-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Fri, 11 Feb 2022 10:49:09 +0000
+
+ucx (1.12.0-1) unstable; urgency=medium
+
+  * New upstream release
+  * Include cmake config files in libucx-dev
+
+ -- Alastair McKinstry <mckinstry@debian.org>  Mon, 13 Dec 2021 10:20:53 +0000
+
 ucx (1.11.2-1) unstable; urgency=medium
 
   * New upstream release

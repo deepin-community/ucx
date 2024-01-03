@@ -1,5 +1,5 @@
 #
-# Copyright (C) Mellanox Technologies Ltd. 2019.  ALL RIGHTS RESERVED.
+# Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
 # See file LICENSE for terms.
 #
 
@@ -17,7 +17,8 @@ MVNCMD = $(MVN) -B -T 1C -f \
          -Dmaven.repo.local=$(maven_repo) \
          -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn
 
-JUCX_GENERATED_H_FILES = org_openucx_jucx_ucp_UcpConstants.h             \
+JUCX_GENERATED_H_FILES = org_openucx_jucx_ucp_UcpConnectionRequest.h     \
+                         org_openucx_jucx_ucp_UcpConstants.h             \
                          org_openucx_jucx_ucp_UcpContext.h               \
                          org_openucx_jucx_ucp_UcpEndpoint.h              \
                          org_openucx_jucx_ucp_UcpListener.h              \
@@ -47,6 +48,10 @@ $(STAMP_FILE): \
 
 $(JUCX_GENERATED_H_FILES): $(STAMP_FILE)
 
+# Return CPU architecure in Java format
+arch = $(if $(filter x86_64,$(shell uname -p)),amd64,$(shell uname -p))
+libjucx = $(objdir)/libjucx_$(arch).so
+
 lib_LTLIBRARIES = libjucx.la
 
 libjucx_la_CPPFLAGS = -I$(JDK)/include -I$(JDK)/include/linux \
@@ -73,8 +78,12 @@ libjucx_la_LIBADD = $(topdir)/src/ucs/libucs.la \
 libjucx_la_DEPENDENCIES = Makefile.am Makefile.in Makefile
 
 # Compile Java source code and pack to jar
-$(jarfile): libjucx.la
+$(libjucx): libjucx.la
+	cp $(objdir)/libjucx.so $(libjucx)
+
+$(jarfile): $(libjucx)
 	$(MVNCMD) package -DskipTests
+	jar tf $(jarfile)
 
 package : $(jarfile)
 
@@ -90,6 +99,18 @@ clean-local:
 set-version:
 	$(MVNCMD) versions:set -DnewVersion=${JUCX_VERSION}
 
+# Add multi-platform support (CI only)
+repack-jar: $(jarfile)
+	$(RM) -r $(java_build_dir)/repack_dir
+	unzip -o $(jarfile) -d $(java_build_dir)/repack_dir
+	\cp $(topdir)/libjucx_*.so/libjucx_*.so $(java_build_dir)/repack_dir
+	jar -cf $(jarfile) -C $(java_build_dir)/repack_dir .
+	jar tf $(jarfile)
+
+multi-arch:
+	@make set-version JUCX_VERSION=${JUCX_VERSION}
+	@make repack-jar
+
 # Publish JUCX jar to maven central
 publish-snapshot:
 	@make set-version JUCX_VERSION=@VERSION@-SNAPSHOT
@@ -97,6 +118,7 @@ publish-snapshot:
 
 publish-release:
 	@make set-version JUCX_VERSION=${JUCX_VERSION}
+	@make repack-jar
 	@make publish
 
 publish:

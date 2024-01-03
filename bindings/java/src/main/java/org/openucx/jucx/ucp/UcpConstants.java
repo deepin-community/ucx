@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Mellanox Technologies Ltd. 2019. ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -39,6 +39,7 @@ public class UcpConstants {
     static long UCP_FEATURE_WAKEUP;
     static long UCP_FEATURE_STREAM;
     static long UCP_FEATURE_AM;
+    static long UCP_FEATURE_EXPORTED_MEMH;
 
     /**
      * UCP worker parameters field mask.
@@ -51,6 +52,7 @@ public class UcpConstants {
     static long UCP_WORKER_PARAM_FIELD_EVENTS;
     static long UCP_WORKER_PARAM_FIELD_USER_DATA;
     static long UCP_WORKER_PARAM_FIELD_EVENT_FD;
+    static long UCP_WORKER_PARAM_FIELD_CLIENT_ID;
 
     /**
      * Mask of events which are expected on wakeup.
@@ -82,6 +84,7 @@ public class UcpConstants {
     static long UCP_EP_PARAM_FIELD_SOCK_ADDR;
     static long UCP_EP_PARAM_FIELD_FLAGS;
     static long UCP_EP_PARAM_FIELD_CONN_REQUEST;
+    static long UCP_EP_PARAM_FIELD_NAME;
 
     /**
      * UCP error handling mode.
@@ -93,6 +96,7 @@ public class UcpConstants {
      */
     static long UCP_EP_PARAMS_FLAGS_CLIENT_SERVER;
     static long UCP_EP_PARAMS_FLAGS_NO_LOOPBACK;
+    static long UCP_EP_PARAMS_FLAGS_SEND_CLIENT_ID;
 
     /**
      *  The enumeration is used to specify the behavior of UcpEndpoint closeNonBlocking.
@@ -107,6 +111,7 @@ public class UcpConstants {
     static long UCP_MEM_MAP_PARAM_FIELD_FLAGS;
     static long UCP_MEM_MAP_PARAM_FIELD_PROT;
     static long UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE;
+    static long UCP_MEM_MAP_PARAM_FIELD_EXPORTED_MEMH_BUFFER;
 
     /**
      *  The enumeration list describes the memory mapping flags.
@@ -114,6 +119,16 @@ public class UcpConstants {
     static long UCP_MEM_MAP_NONBLOCK;
     static long UCP_MEM_MAP_ALLOCATE;
     static long UCP_MEM_MAP_FIXED;
+
+    /**
+     * UCP memory handle packing parameters field mask.
+     */
+    static long UCP_MEMH_PACK_PARAM_FIELD_FLAGS;
+
+    /**
+     * The enumeration describes the memory handle packing flags.
+     */
+    static long UCP_MEMH_PACK_FLAG_EXPORT;
 
     /**
      * The enumeration list describes the memory mapping protections supported by

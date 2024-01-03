@@ -1,5 +1,5 @@
 /**
- * Copyright (C) Mellanox Technologies Ltd. 2001-2017.  ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2017. ALL RIGHTS RESERVED.
  *
  * See file LICENSE for terms.
  */
@@ -67,7 +67,7 @@ ucp_stream_send_req(ucp_request_t *req, size_t count,
     ucs_status_t status = ucp_request_send_start(req, max_short, zcopy_thresh,
                                                  SIZE_MAX, count, 0,
                                                  req->send.length, msg_config,
-                                                 proto);
+                                                 proto, param);
     if (status != UCS_OK) {
         return UCS_STATUS_PTR(status);
     }
@@ -77,8 +77,11 @@ ucp_stream_send_req(ucp_request_t *req, size_t count,
      * If it is completed immediately, release the request and return the status.
      * Otherwise, return the request.
      */
-    ucp_request_send(req, 0);
+    ucp_request_send(req);
     if (req->flags & UCP_REQUEST_FLAG_COMPLETED) {
+        /* Coverity wrongly resolves completion callback function to
+         * 'ucp_cm_client_connect_progress' */
+        /* coverity[offset_free] */
         ucp_request_imm_cmpl_param(param, req, send);
     }
 
@@ -138,8 +141,7 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_stream_send_nbx,
 
     ucs_trace_req("stream_send_nbx buffer %p count %zu to %s cb %p flags %u",
                   buffer, count, ucp_ep_peer_name(ep),
-                  param->op_attr_mask & UCP_OP_ATTR_FIELD_CALLBACK ?
-                  param->cb.send : NULL, flags);
+                  ucp_request_param_send_callback(param), flags);
 
     if (ucs_unlikely(flags != 0)) {
         ret = UCS_STATUS_PTR(UCS_ERR_NOT_IMPLEMENTED);
@@ -152,7 +154,7 @@ UCS_PROFILE_FUNC(ucs_status_ptr_t, ucp_stream_send_nbx,
         goto out;
     }
 
-    if (ucp_memory_type_cache_is_empty(ep->worker->context)) {
+    if (ucs_memtype_cache_is_empty()) {
         attr_mask = param->op_attr_mask &
                     (UCP_OP_ATTR_FIELD_DATATYPE | UCP_OP_ATTR_FLAG_NO_IMM_CMPL);
         if (ucs_likely(attr_mask == 0)) {
@@ -260,11 +262,11 @@ static size_t ucp_stream_pack_am_middle_dt(void *dest, void *arg)
 
 static ucs_status_t ucp_stream_bcopy_multi(uct_pending_req_t *self)
 {
-    ucs_status_t status = ucp_do_am_bcopy_multi(self,
-                                                UCP_AM_ID_STREAM_DATA,
+    ucs_status_t status = ucp_do_am_bcopy_multi(self, UCP_AM_ID_STREAM_DATA,
                                                 UCP_AM_ID_STREAM_DATA,
                                                 ucp_stream_pack_am_first_dt,
-                                                ucp_stream_pack_am_middle_dt, 0);
+                                                ucp_stream_pack_am_middle_dt, 0,
+                                                0);
 
     return ucp_am_bcopy_handle_status_from_pending(self, 1, 0, status);
 }
@@ -286,11 +288,10 @@ static ucs_status_t ucp_stream_eager_zcopy_multi(uct_pending_req_t *self)
     ucp_stream_am_hdr_t hdr;
 
     hdr.ep_id = ucp_send_request_get_ep_remote_id(req);
-    return ucp_do_am_zcopy_multi(self,
-                                 UCP_AM_ID_STREAM_DATA,
-                                 UCP_AM_ID_STREAM_DATA,
-                                 &hdr, sizeof(hdr), &hdr, sizeof(hdr),
-                                 NULL, 0ul, ucp_proto_am_zcopy_req_complete, 0);
+    return ucp_do_am_zcopy_multi(self, UCP_AM_ID_STREAM_DATA,
+                                 UCP_AM_ID_STREAM_DATA, &hdr, sizeof(hdr), &hdr,
+                                 sizeof(hdr), NULL, 0ul, 0ul,
+                                 ucp_proto_am_zcopy_req_complete, 0);
 }
 
 const ucp_request_send_proto_t ucp_stream_am_proto = {

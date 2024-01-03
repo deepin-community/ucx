@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 * See file LICENSE for terms.
 */
 
@@ -22,12 +22,6 @@
 
 #if _OPENMP
 #include "omp.h"
-#endif
-
-#if _OPENMP && ENABLE_MT
-#define MT_TEST_NUM_THREADS omp_get_max_threads()
-#else
-#define MT_TEST_NUM_THREADS 4
 #endif
 
 
@@ -66,7 +60,7 @@ public:
     enum {
         SINGLE_THREAD = 42,
         MULTI_THREAD_CONTEXT, /* workers are single-threaded, context is mt-shared */
-        MULTI_THREAD_WORKER   /* workers are multi-threaded, cotnext is mt-single */
+        MULTI_THREAD_WORKER   /* workers are multi-threaded, context is mt-single */
     };
 
     class entity {
@@ -79,7 +73,8 @@ public:
         typedef enum {
             LISTEN_CB_EP,       /* User's callback accepts ucp_ep_h */
             LISTEN_CB_CONN,     /* User's callback accepts ucp_conn_request_h */
-            LISTEN_CB_REJECT    /* User's callback rejects ucp_conn_request_h */
+            LISTEN_CB_REJECT,   /* User's callback rejects ucp_conn_request_h */
+            LISTEN_CB_CUSTOM    /* User's callback with custom test logic */
         } listen_cb_type_t;
 
         entity(const ucp_test_param& test_param, ucp_config_t* ucp_config,
@@ -104,19 +99,20 @@ public:
 
         void fence(int worker_index = 0) const;
 
-        void* disconnect_nb(int worker_index = 0, int ep_index = 0,
-                            enum ucp_ep_close_mode mode = UCP_EP_CLOSE_MODE_FLUSH);
+        void *disconnect_nb(int worker_index = 0, int ep_index = 0,
+                            uint32_t close_flags = 0);
 
         void close_ep_req_free(void *close_req);
 
         void close_all_eps(const ucp_test &test, int worker_idx,
-                           enum ucp_ep_close_mode mode = UCP_EP_CLOSE_MODE_FLUSH);
+                           uint32_t close_flags = 0);
 
         void destroy_worker(int worker_index = 0);
 
         ucs_status_t listen(listen_cb_type_t cb_type,
                             const struct sockaddr *saddr, socklen_t addrlen,
                             const ucp_ep_params_t& ep_params,
+                            ucp_listener_conn_handler_t *custom_cb = NULL,
                             int worker_index = 0);
 
         ucp_ep_h ep(int worker_index = 0, int ep_index = 0) const;
@@ -130,6 +126,10 @@ public:
         ucp_listener_h listenerh() const;
 
         unsigned progress(int worker_index = 0);
+
+        ucp_mem_h mem_map(void *address, size_t length);
+
+        void mem_unmap(ucp_mem_h memh);
 
         int get_num_workers() const;
 
@@ -145,7 +145,7 @@ public:
 
         void warn_existing_eps() const;
 
-        double set_ib_ud_timeout(double timeout_sec);
+        double set_ib_ud_peer_timeout(double timeout_sec);
 
         void cleanup();
 
@@ -174,9 +174,17 @@ public:
         static void reject_conn_cb(ucp_conn_request_h conn_req, void *arg);
 
         void set_ep(ucp_ep_h ep, int worker_index, int ep_index);
+
+        static ucs_log_func_rc_t
+        hide_config_warns_logger(const char *file, unsigned line,
+                                 const char *function, ucs_log_level_t level,
+                                 const ucs_log_component_config_t *comp_conf,
+                                 const char *message, va_list ap);
     };
 
     static bool is_request_completed(void *req);
+
+    static void *ep_close_nbx(ucp_ep_h ep, uint32_t flags);
 };
 
 /**
@@ -209,37 +217,59 @@ public:
 
     virtual void modify_config(const std::string& name, const std::string& value,
                                modify_config_mode_t mode = FAIL_IF_NOT_EXIST);
-    void stats_activate();
-    void stats_restore();
+
+    void disable_keepalive();
 
 private:
     static void set_ucp_config(ucp_config_t *config, const std::string& tls);
     static bool check_tls(const std::string& tls);
-    static void add_variant_value(std::vector<ucp_test_variant_value>& values,
-                                  int value, std::string name);
-    ucs_status_t request_process(void *req, int worker_index, bool wait);
+    ucs_status_t request_process(void *req, int worker_index, bool wait,
+                                 bool wakeup = false,
+                                 const std::vector<entity*> &entities = {});
 
 protected:
-    typedef void (*get_variants_func_t)(std::vector<ucp_test_variant>&);
+    using variant_vec_t       = std::vector<ucp_test_variant>;
+    using get_variants_func_t = void (*)(variant_vec_t&);
 
     virtual void init();
     bool is_self() const;
     virtual void cleanup();
     virtual bool has_transport(const std::string& tl_name) const;
     bool has_any_transport(const std::vector<std::string>& tl_names) const;
+    bool has_any_transport(const std::string *tls, size_t tl_size) const;
     entity* create_entity(bool add_in_front = false);
     entity* create_entity(bool add_in_front, const ucp_test_param& test_param);
+    unsigned progress(const std::vector<entity*> &entities,
+                      int worker_index = 0) const;
     unsigned progress(int worker_index = 0) const;
     void short_progress_loop(int worker_index = 0) const;
     void flush_ep(const entity &e, int worker_index = 0, int ep_index = 0);
-    void flush_worker(const entity &e, int worker_index = 0);
+    void flush_worker(const entity &e, int worker_index = 0,
+                      const std::vector<entity*> &entities = {});
     void flush_workers();
     void disconnect(entity& entity);
-    ucs_status_t request_wait(void *req, int worker_index = 0);
+    void check_events(const std::vector<entity*> &entities, bool wakeup,
+                      int worker_index = 0);
+    ucs_status_t
+    request_progress(void *req, const std::vector<entity*> &entities,
+                     double timeout = 10.0, int worker_index = 0);
+    ucs_status_t request_wait(void *req,
+                              const std::vector<entity*> &entities = {},
+                              int worker_index = 0, bool wakeup = false);
     ucs_status_t requests_wait(std::vector<void*> &reqs, int worker_index = 0);
+    ucs_status_t requests_wait(const std::initializer_list<void*> reqs_list,
+                               int worker_index = 0);
+    ucp_tag_message_h message_wait(entity& e, ucp_tag_t tag, ucp_tag_t tag_mask,
+                                   ucp_tag_recv_info_t *info, int remove = 1,
+                                   int worker_index = 0);
     void request_release(void *req);
+    void request_cancel(entity &e, void *req);
+    int wait_for_wakeup(const std::vector<entity*> &entities,
+                        int poll_timeout = -1, int worker_index = 0);
     int max_connections();
-    void set_tl_timeouts(ucs::ptr_vector<ucs::scoped_setenv> &env);
+    void configure_peer_failure_settings();
+
+    static bool check_reg_mem_types(const entity& e, ucs_memory_type_t mem_type);
 
     // Add test variant without values, with given context params
     static ucp_test_variant&
@@ -250,6 +280,11 @@ protected:
     static ucp_test_variant&
     add_variant(std::vector<ucp_test_variant>& variants, uint64_t ctx_features,
                 int thread_type = SINGLE_THREAD);
+
+    // Add value to test variant
+    static void
+    add_variant_value(std::vector<ucp_test_variant_value>& values,
+                      int value, const std::string& name);
 
     // Add test variant with context params and single value
     static void
@@ -293,6 +328,10 @@ protected:
     // Return context parameters of the current test variant
     const ucp_params_t& get_variant_ctx_params() const;
 
+    // Return maximal UCP threads in current environment, assuming each thread
+    // can create 2 workers
+    static unsigned mt_num_threads();
+
     static void err_handler_cb(void *arg, ucp_ep_h ep, ucs_status_t status) {
         entity *e = reinterpret_cast<entity*>(arg);
         e->add_err(status);
@@ -335,6 +374,8 @@ protected:
         ucp_mem_h     m_memh;
         void*         m_rkey_buffer;
     };
+
+    ucs::ptr_vector<ucs::scoped_setenv> m_env;
 };
 
 
@@ -344,6 +385,8 @@ public:
 };
 
 
+std::ostream& operator<<(std::ostream& os,
+                         const std::vector<std::string>& str_vector);
 std::ostream& operator<<(std::ostream& os, const ucp_test_param& test_param);
 
 template <class T>
@@ -363,7 +406,7 @@ std::vector<ucp_test_param> enum_test_params(const std::string& tls)
  * @param _tls         Transport names.
  */
 #define UCP_INSTANTIATE_TEST_CASE_TLS(_test_case, _name, _tls) \
-    INSTANTIATE_TEST_CASE_P(_name,  _test_case, \
+    INSTANTIATE_TEST_SUITE_P(_name,  _test_case, \
                             testing::ValuesIn(enum_test_params<_test_case>(_tls)));
 
 

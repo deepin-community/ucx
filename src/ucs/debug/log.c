@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -29,6 +29,7 @@
 #define UCS_LOG_METADATA_FMT    "%17s:%-4u %-4s %-5s %*s"
 #define UCS_LOG_PROC_DATA_FMT   "[%s:%-5d:%s]"
 
+#define UCS_LOG_COMPACT_FMT     UCS_LOG_TIME_FMT " " UCS_LOG_PROC_DATA_FMT "  "
 #define UCS_LOG_SHORT_FMT       UCS_LOG_TIME_FMT " [%s] " UCS_LOG_METADATA_FMT "%s\n"
 #define UCS_LOG_FMT             UCS_LOG_TIME_FMT " " UCS_LOG_PROC_DATA_FMT " " \
                                 UCS_LOG_METADATA_FMT "%s\n"
@@ -40,7 +41,10 @@
     ucs_log_level_names[_level], (ucs_log_current_indent * 2), ""
 
 #define UCS_LOG_PROC_DATA_ARG() \
-    ucs_log_hostname, ucs_log_pid, ucs_log_get_thread_name()
+    ucs_log_hostname, ucs_log_get_pid(), ucs_log_get_thread_name()
+
+#define UCS_LOG_COMPACT_ARG(_tv)\
+    UCS_LOG_TIME_ARG(_tv), UCS_LOG_PROC_DATA_ARG()
 
 #define UCS_LOG_SHORT_ARG(_short_file, _line, _level, _comp_conf, _tv, \
                           _message) \
@@ -87,6 +91,15 @@ static ucs_spinlock_t ucs_log_global_filter_lock;
 static khash_t(ucs_log_filter) ucs_log_global_filter;
 
 
+static inline int ucs_log_get_pid()
+{
+    if (ucs_unlikely(ucs_log_pid == 0)) {
+        return getpid();
+    }
+
+    return ucs_log_pid;
+}
+
 static const char *ucs_log_get_thread_name()
 {
     char *name = ucs_log_thread_name;
@@ -105,7 +118,10 @@ void ucs_log_flush()
 {
     if (ucs_log_file != NULL) {
         fflush(ucs_log_file);
-        fsync(fileno(ucs_log_file));
+
+        if (ucs_log_file_close) { /* non-stdout/stderr */
+            fsync(fileno(ucs_log_file));
+        }
     }
 }
 
@@ -197,16 +213,39 @@ static void ucs_log_handle_file_max_size(int log_entry_len)
                            &next_token, NULL);
 }
 
-static void ucs_log_print(size_t buffer_size, const char *short_file, int line,
+void ucs_log_print_compact(const char *str)
+{
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+
+    if (RUNNING_ON_VALGRIND) {
+        VALGRIND_PRINTF(UCS_LOG_TIME_FMT " %s\n", UCS_LOG_TIME_ARG(&tv), str);
+    } else if (ucs_log_initialized) {
+        if (ucs_log_file_close) { /* non-stdout/stderr */
+            ucs_log_handle_file_max_size(strlen(str) + 1);
+        }
+
+        fprintf(ucs_log_file, UCS_LOG_COMPACT_FMT " %s\n",
+                UCS_LOG_COMPACT_ARG(&tv), str);
+    } else {
+        fprintf(stdout, UCS_LOG_COMPACT_FMT " %s\n", UCS_LOG_COMPACT_ARG(&tv),
+                str);
+    }
+}
+
+static void ucs_log_print(const char *short_file, int line,
                           ucs_log_level_t level,
                           const ucs_log_component_config_t *comp_conf,
                           const struct timeval *tv, const char *message)
 {
-    char *log_buf;
+    size_t buffer_size;
     int log_entry_len;
+    char *log_buf;
 
     if (RUNNING_ON_VALGRIND) {
-        log_buf = ucs_alloca(buffer_size + 1);
+        buffer_size = ucs_log_get_buffer_size();
+        log_buf     = ucs_alloca(buffer_size + 1);
         snprintf(log_buf, buffer_size, UCS_LOG_SHORT_FMT,
                 UCS_LOG_SHORT_ARG(short_file, line, level,
                                   comp_conf, tv, message));
@@ -282,8 +321,7 @@ ucs_log_default_handler(const char *file, unsigned line, const char *function,
 
         log_line = strtok_r(buf, "\n", &saveptr);
         while (log_line != NULL) {
-            ucs_log_print(buffer_size, short_file, line, level, comp_conf, &tv,
-                          log_line);
+            ucs_log_print(short_file, line, level, comp_conf, &tv, log_line);
             log_line = strtok_r(NULL, "\n", &saveptr);
         }
     }
@@ -358,8 +396,8 @@ void ucs_log_fatal_error(const char *format, ...)
     p = buffer;
 
     /* Print hostname:pid */
-    snprintf(p, buffer_size, "[%s:%-5d:%s:%d] ", ucs_log_hostname, ucs_log_pid,
-             ucs_log_get_thread_name(), ucs_get_tid());
+    snprintf(p, buffer_size, "[%s:%-5d:%s:%d] ", ucs_log_hostname,
+             ucs_log_get_pid(), ucs_log_get_thread_name(), ucs_get_tid());
     buffer_size -= strlen(p);
     p           += strlen(p);
 
@@ -451,6 +489,17 @@ void ucs_log_early_init()
     ucs_log_thread_count  = 0;
 }
 
+static void ucs_log_atfork_prepare()
+{
+    ucs_log_pid = 0;
+    ucs_log_flush();
+}
+
+static void ucs_log_atfork_post()
+{
+    ucs_log_pid = getpid();
+}
+
 void ucs_log_init()
 {
     const char *next_token;
@@ -488,6 +537,9 @@ void ucs_log_init()
                                &ucs_log_file, &ucs_log_file_close,
                                &next_token, &ucs_log_file_base_name);
     }
+
+    pthread_atfork(ucs_log_atfork_prepare, ucs_log_atfork_post,
+                   ucs_log_atfork_post);
 }
 
 void ucs_log_cleanup()

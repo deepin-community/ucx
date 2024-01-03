@@ -1,5 +1,5 @@
 /**
-* Copyright (C) Mellanox Technologies Ltd. 2001-2011.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2011. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
 */
@@ -34,7 +34,6 @@ struct ucs_async_context {
     };
 
     ucs_async_mode_t  mode;          /* Event delivery mode */
-    volatile uint32_t num_handlers;  /* Number of event and timer handlers */
     ucs_mpmc_queue_t  missed;        /* Miss queue */
     ucs_time_t        last_wakeup;   /* time of the last wakeup */
 };
@@ -109,8 +108,7 @@ static inline int ucs_async_check_miss(ucs_async_context_t *async)
 static inline int ucs_async_is_blocked(const ucs_async_context_t *async)
 {
     if (async->mode == UCS_ASYNC_MODE_THREAD_SPINLOCK) {
-        return ucs_recursive_spin_is_owner(&async->thread.spinlock,
-                                           pthread_self());
+        return ucs_recursive_spinlock_is_held(&async->thread.spinlock);
     } else if (async->mode == UCS_ASYNC_MODE_THREAD_MUTEX) {
         return ucs_recursive_mutex_is_blocked(&async->thread.mutex);
     } else if (async->mode == UCS_ASYNC_MODE_SIGNAL) {

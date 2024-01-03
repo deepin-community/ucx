@@ -1,5 +1,5 @@
 /*
-* Copyright (C) Mellanox Technologies Ltd. 2001-2014.  ALL RIGHTS RESERVED.
+* Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2001-2014. ALL RIGHTS RESERVED.
 * Copyright (C) Huawei Technologies Co., Ltd. 2020. ALL RIGHTS RESERVED.
 *
 * See file LICENSE for terms.
@@ -137,6 +137,10 @@ static inline void ucs_recursive_spin_unlock(ucs_recursive_spinlock_t *lock)
         ucs_spin_unlock(&lock->super);
     }
 }
+
+int ucs_spinlock_is_held(ucs_spinlock_t *lock);
+
+int ucs_recursive_spinlock_is_held(const ucs_recursive_spinlock_t *lock);
 
 END_C_DECLS
 

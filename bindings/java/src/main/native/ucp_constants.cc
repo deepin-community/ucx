@@ -1,5 +1,5 @@
 /*
- * Copyright (C) Mellanox Technologies Ltd. 2019. ALL RIGHTS RESERVED.
+ * Copyright (c) NVIDIA CORPORATION & AFFILIATES, 2019. ALL RIGHTS RESERVED.
  * See file LICENSE for terms.
  */
 
@@ -31,6 +31,7 @@ Java_org_openucx_jucx_ucp_UcpConstants_loadConstants(JNIEnv *env, jclass cls)
     JUCX_DEFINE_LONG_CONSTANT(UCP_FEATURE_WAKEUP);
     JUCX_DEFINE_LONG_CONSTANT(UCP_FEATURE_STREAM);
     JUCX_DEFINE_LONG_CONSTANT(UCP_FEATURE_AM);
+    JUCX_DEFINE_LONG_CONSTANT(UCP_FEATURE_EXPORTED_MEMH);
 
     // UCP worker parameters
     JUCX_DEFINE_LONG_CONSTANT(UCP_WORKER_PARAM_FIELD_THREAD_MODE);
@@ -38,6 +39,7 @@ Java_org_openucx_jucx_ucp_UcpConstants_loadConstants(JNIEnv *env, jclass cls)
     JUCX_DEFINE_LONG_CONSTANT(UCP_WORKER_PARAM_FIELD_EVENTS);
     JUCX_DEFINE_LONG_CONSTANT(UCP_WORKER_PARAM_FIELD_USER_DATA);
     JUCX_DEFINE_LONG_CONSTANT(UCP_WORKER_PARAM_FIELD_EVENT_FD);
+    JUCX_DEFINE_LONG_CONSTANT(UCP_WORKER_PARAM_FIELD_CLIENT_ID);
 
     // UCP worker wakeup events
     JUCX_DEFINE_LONG_CONSTANT(UCP_WAKEUP_RMA);
@@ -61,6 +63,7 @@ Java_org_openucx_jucx_ucp_UcpConstants_loadConstants(JNIEnv *env, jclass cls)
     JUCX_DEFINE_LONG_CONSTANT(UCP_EP_PARAM_FIELD_SOCK_ADDR);
     JUCX_DEFINE_LONG_CONSTANT(UCP_EP_PARAM_FIELD_FLAGS);
     JUCX_DEFINE_LONG_CONSTANT(UCP_EP_PARAM_FIELD_CONN_REQUEST);
+    JUCX_DEFINE_LONG_CONSTANT(UCP_EP_PARAM_FIELD_NAME);
 
     // UCP error handling mode
     JUCX_DEFINE_INT_CONSTANT(UCP_ERR_HANDLING_MODE_PEER);
@@ -71,6 +74,7 @@ Java_org_openucx_jucx_ucp_UcpConstants_loadConstants(JNIEnv *env, jclass cls)
     // The enumeration list describes the endpoint's parameters flags
     JUCX_DEFINE_LONG_CONSTANT(UCP_EP_PARAMS_FLAGS_CLIENT_SERVER);
     JUCX_DEFINE_LONG_CONSTANT(UCP_EP_PARAMS_FLAGS_NO_LOOPBACK);
+    JUCX_DEFINE_LONG_CONSTANT(UCP_EP_PARAMS_FLAGS_SEND_CLIENT_ID);
 
     // UCP memory mapping parameters field mask
     JUCX_DEFINE_LONG_CONSTANT(UCP_MEM_MAP_PARAM_FIELD_ADDRESS);
@@ -78,6 +82,7 @@ Java_org_openucx_jucx_ucp_UcpConstants_loadConstants(JNIEnv *env, jclass cls)
     JUCX_DEFINE_LONG_CONSTANT(UCP_MEM_MAP_PARAM_FIELD_FLAGS);
     JUCX_DEFINE_LONG_CONSTANT(UCP_MEM_MAP_PARAM_FIELD_PROT);
     JUCX_DEFINE_LONG_CONSTANT(UCP_MEM_MAP_PARAM_FIELD_MEMORY_TYPE);
+    JUCX_DEFINE_LONG_CONSTANT(UCP_MEM_MAP_PARAM_FIELD_EXPORTED_MEMH_BUFFER);
 
     // The enumeration list describes the memory mapping flags
     JUCX_DEFINE_LONG_CONSTANT(UCP_MEM_MAP_NONBLOCK);
@@ -89,6 +94,12 @@ Java_org_openucx_jucx_ucp_UcpConstants_loadConstants(JNIEnv *env, jclass cls)
     JUCX_DEFINE_LONG_CONSTANT(UCP_MEM_MAP_PROT_LOCAL_WRITE);
     JUCX_DEFINE_LONG_CONSTANT(UCP_MEM_MAP_PROT_REMOTE_READ);
     JUCX_DEFINE_LONG_CONSTANT(UCP_MEM_MAP_PROT_REMOTE_WRITE);
+
+    // UCP memory packing parameters field mask
+    JUCX_DEFINE_LONG_CONSTANT(UCP_MEMH_PACK_PARAM_FIELD_FLAGS);
+
+    // The enumeration list describes the memory packing flags
+    JUCX_DEFINE_LONG_CONSTANT(UCP_MEMH_PACK_FLAG_EXPORT);
 
     // The enumeration defines behavior of @ref ucp_stream_recv_nb function
     JUCX_DEFINE_LONG_CONSTANT(UCP_STREAM_RECV_FLAG_WAITALL);
